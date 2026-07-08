@@ -1103,7 +1103,7 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&real_skill, source.join("caveman")).unwrap();
         #[cfg(not(unix))]
-        copy_dir_all(&real_skill, source.join("caveman")).unwrap();
+        copy_dir_all(&real_skill, &source.join("caveman")).unwrap();
 
         let target = tmp.path().join("Bridle").join("skills");
         let report = import_skills(&source, &target, false, false, false).unwrap();
@@ -1218,7 +1218,7 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(real_skill.join("caveman"), skills_dir.join("caveman")).unwrap();
         #[cfg(not(unix))]
-        copy_dir_all(&real_skill.join("caveman"), skills_dir.join("caveman")).unwrap();
+        copy_dir_all(&real_skill.join("caveman"), &skills_dir.join("caveman")).unwrap();
 
         let removed = remove_skill(&skills_dir, "caveman").unwrap();
         assert!(removed);
