@@ -55,8 +55,10 @@ brew install KristianLentino99/tap/bridle
 ### Cargo (any platform)
 
 ```bash
-cargo install bridle
+cargo install bridle-harness
 ```
+
+> The crate is published as `bridle-harness` because the `bridle` name was already taken on crates.io. The installed binary is still named `bridle`.
 
 ### Build from source
 
