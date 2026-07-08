@@ -1,7 +1,10 @@
 pub mod adapters;
+pub mod cli;
+pub mod commands;
 pub mod harness;
 pub mod mcp_config;
 pub mod platform;
+pub mod profile;
 pub mod skills;
 pub mod sync;
 

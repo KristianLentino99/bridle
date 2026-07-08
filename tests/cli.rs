@@ -56,12 +56,44 @@ impl CliTest {
     }
 
     fn mcp_json(&self) -> PathBuf {
-        self.bridle_home.join("mcp.json")
+        // Resolve the active profile path so tests work on Windows where the
+        // legacy ~/Bridle/mcp.json path may be a copy instead of a symlink.
+        self.active_mcp_json()
+    }
+
+    fn active_mcp_json(&self) -> PathBuf {
+        let config_path = self.bridle_home.join("config.json");
+        let active = if config_path.exists() {
+            let raw = std::fs::read_to_string(&config_path).unwrap();
+            let config: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            config["active_profile"]
+                .as_str()
+                .unwrap_or("default")
+                .to_string()
+        } else {
+            "default".to_string()
+        };
+        self.profile_mcp_json(&active)
     }
 
     fn read_mcp_json(&self) -> serde_json::Value {
         let raw = std::fs::read_to_string(self.mcp_json()).unwrap();
         serde_json::from_str(&raw).unwrap()
+    }
+
+    fn skills_dir(&self) -> PathBuf {
+        let config_path = self.bridle_home.join("config.json");
+        let active = if config_path.exists() {
+            let raw = std::fs::read_to_string(&config_path).unwrap();
+            let config: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            config["active_profile"]
+                .as_str()
+                .unwrap_or("default")
+                .to_string()
+        } else {
+            "default".to_string()
+        };
+        self.profile_dir(&active).join("skills")
     }
 
     fn harness_base(&self, spec: &'static HarnessSpec) -> PathBuf {
@@ -78,6 +110,19 @@ impl CliTest {
         let dir = self.harness_base(&PI);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("mcp.json"), contents).unwrap();
+    }
+
+    fn profile_dir(&self, name: &str) -> PathBuf {
+        self.bridle_home.join("profiles").join(name)
+    }
+
+    fn profile_mcp_json(&self, name: &str) -> PathBuf {
+        self.profile_dir(name).join("mcp.json")
+    }
+
+    fn read_profile_mcp_json(&self, name: &str) -> serde_json::Value {
+        let raw = std::fs::read_to_string(self.profile_mcp_json(name)).unwrap();
+        serde_json::from_str(&raw).unwrap()
     }
 }
 
@@ -325,12 +370,7 @@ fn import_skills_copies_from_source() {
     let stdout = t.stdout(&output);
     assert!(stdout.contains("caveman"), "stdout: {stdout}");
 
-    assert!(t
-        .bridle_home
-        .join("skills")
-        .join("caveman")
-        .join("SKILL.md")
-        .exists());
+    assert!(t.skills_dir().join("caveman").join("SKILL.md").exists());
 }
 
 #[test]
@@ -339,7 +379,7 @@ fn sync_skills_to_installed_harness() {
     t.run_ok(&["init"]);
 
     // Add a skill to the master skills dir.
-    let skill_dir = t.bridle_home.join("skills").join("caveman");
+    let skill_dir = t.skills_dir().join("caveman");
     std::fs::create_dir_all(&skill_dir).unwrap();
     std::fs::write(skill_dir.join("SKILL.md"), "# caveman").unwrap();
 
@@ -366,10 +406,191 @@ fn remove_skill_deletes_from_master_skills() {
     let t = CliTest::new();
     t.run_ok(&["init"]);
 
-    let skill_dir = t.bridle_home.join("skills").join("caveman");
+    let skill_dir = t.skills_dir().join("caveman");
     std::fs::create_dir_all(&skill_dir).unwrap();
     std::fs::write(skill_dir.join("SKILL.md"), "# caveman").unwrap();
 
     t.run_ok(&["remove", "skills", "caveman"]);
     assert!(!skill_dir.exists());
+}
+
+#[test]
+fn init_creates_default_profile() {
+    let t = CliTest::new();
+    t.run_ok(&["init"]);
+
+    assert!(t.profile_dir("default").exists());
+    assert!(t.profile_mcp_json("default").exists());
+    assert!(t.profile_dir("default").join("skills").exists());
+
+    let config = t.read_profile_mcp_json("default");
+    assert!(config["mcpServers"].as_object().unwrap().is_empty());
+}
+
+#[test]
+fn profile_create_makes_named_profile() {
+    let t = CliTest::new();
+    t.run_ok(&["init"]);
+    t.run_ok(&["profile", "create", "work"]);
+
+    assert!(t.profile_dir("work").exists());
+    assert!(t.profile_mcp_json("work").exists());
+    assert!(t.profile_dir("work").join("skills").exists());
+
+    let config = t.read_profile_mcp_json("work");
+    assert!(config["mcpServers"].as_object().unwrap().is_empty());
+}
+
+#[test]
+fn profile_list_shows_profiles_and_active_marker() {
+    let t = CliTest::new();
+    t.run_ok(&["init"]);
+    t.run_ok(&["profile", "create", "work"]);
+
+    let output = t.run_ok(&["profile", "list"]);
+    let stdout = t.stdout(&output);
+
+    assert!(stdout.contains("default *"), "stdout: {stdout}");
+    assert!(stdout.contains("work"), "stdout: {stdout}");
+}
+
+#[test]
+fn profile_switch_changes_active_profile() {
+    let t = CliTest::new();
+    t.run_ok(&["init"]);
+    t.run_ok(&["profile", "create", "work"]);
+
+    // Add a server to the active default profile so we can tell them apart.
+    t.run_ok(&["add", "posthog", "--url", "https://mcp.posthog.com/mcp"]);
+
+    // Switch without sync.
+    let output = t.run_ok(&["profile", "switch", "work", "--no-sync"]);
+    let stdout = t.stdout(&output);
+    assert!(
+        stdout.contains("Switched to profile 'work'"),
+        "stdout: {stdout}"
+    );
+
+    // work profile should be empty; default should still contain posthog.
+    let config = t.read_profile_mcp_json("work");
+    assert!(config["mcpServers"].as_object().unwrap().is_empty());
+
+    let default_config = t.read_profile_mcp_json("default");
+    assert!(default_config["mcpServers"]
+        .as_object()
+        .unwrap()
+        .contains_key("posthog"));
+}
+
+#[test]
+fn profile_clone_copies_profile_contents() {
+    let t = CliTest::new();
+    t.run_ok(&["init"]);
+    t.run_ok(&["add", "posthog", "--url", "https://mcp.posthog.com/mcp"]);
+
+    let output = t.run_ok(&["profile", "clone", "default", "work"]);
+    let stdout = t.stdout(&output);
+    assert!(
+        stdout.contains("Cloned profile 'default' to 'work'"),
+        "stdout: {stdout}"
+    );
+
+    let cloned = t.read_profile_mcp_json("work");
+    assert!(cloned["mcpServers"]
+        .as_object()
+        .unwrap()
+        .contains_key("posthog"));
+}
+
+#[test]
+fn profile_remove_deletes_non_active_profile() {
+    let t = CliTest::new();
+    t.run_ok(&["init"]);
+    t.run_ok(&["profile", "create", "work"]);
+
+    t.run_ok(&["profile", "remove", "work"]);
+    assert!(!t.profile_dir("work").exists());
+}
+
+#[test]
+fn profile_rename_updates_directory_and_active_state() {
+    let t = CliTest::new();
+    t.run_ok(&["init"]);
+    t.run_ok(&["profile", "create", "work"]);
+    t.run_ok(&["profile", "switch", "work", "--no-sync"]);
+
+    t.run_ok(&["profile", "rename", "work", "job"]);
+
+    assert!(!t.profile_dir("work").exists());
+    assert!(t.profile_dir("job").exists());
+
+    // Active profile should still resolve to the renamed profile.
+    let list_output = t.run_ok(&["profile", "list"]);
+    let stdout = t.stdout(&list_output);
+    assert!(stdout.contains("job *"), "stdout: {stdout}");
+}
+
+#[test]
+fn profile_auto_migrates_legacy_layout() {
+    let t = CliTest::new();
+    std::fs::create_dir_all(&t.bridle_home).unwrap();
+    // Write to the legacy path before migration has happened.
+    std::fs::write(
+        t.bridle_home.join("mcp.json"),
+        r#"{"mcpServers":{"legacy":{"command":"npx"}}}"#,
+    )
+    .unwrap();
+
+    // Running any profile command triggers migration.
+    t.run_ok(&["profile", "list"]);
+
+    assert!(t.profile_dir("default").exists());
+    let migrated = t.read_profile_mcp_json("default");
+    assert!(migrated["mcpServers"]
+        .as_object()
+        .unwrap()
+        .contains_key("legacy"));
+}
+
+#[test]
+fn profile_switch_warns_when_watch_marker_present() {
+    let t = CliTest::new();
+    t.run_ok(&["init"]);
+    t.run_ok(&["profile", "create", "work"]);
+
+    // Simulate a running watch process by creating the marker.
+    std::fs::File::create(t.bridle_home.join(".watch")).unwrap();
+
+    // Provide 'n' to the confirmation prompts.
+    let mut child = std::process::Command::new(binary())
+        .args(["profile", "switch", "work"])
+        .env("BRIDLE_HOME", &t.bridle_home)
+        .env("BRIDLE_TEST_HOME", &t.home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    use std::io::Write;
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        stdin.write_all(b"n\n").unwrap();
+    }
+    let output = child.wait_with_output().unwrap();
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("bridle sync --watch appears to be running"),
+        "combined: {combined}"
+    );
+
+    // Because we answered 'n', the active profile should still be default.
+    let list_output = t.run_ok(&["profile", "list"]);
+    let stdout = t.stdout(&list_output);
+    assert!(stdout.contains("default *"), "stdout: {stdout}");
 }

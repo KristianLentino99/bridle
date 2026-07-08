@@ -142,14 +142,44 @@ bridle import all --all --force
 
 By default, skills are copied so `~/Bridle/skills/` becomes the canonical source. Use `--link` if you prefer `~/.agents/skills/` (or `--source`) to remain the source of truth — updates there are instantly visible to bridle and all harnesses. Use `--update` to refresh copied skills when new versions arrive. Run `bridle sync` afterwards to push everything to every harness.
 
+### Profiles
+
+Keep separate sets of MCP servers and skills for different contexts (work, personal, a startup, etc.).
+
+```bash
+bridle profile create work
+bridle profile create personal
+bridle profile clone work work-backup
+bridle profile list
+bridle profile switch work
+# bridle profile switch warns if bridle sync --watch is running
+bridle profile rename personal my-startup
+bridle profile remove my-startup
+```
+
+- `bridle init` creates a `default` profile.
+- Existing single-file setups are auto-migrated to a `default` profile on the first profile command.
+- `~/Bridle/mcp.json` and `~/Bridle/skills/` are symlinks to the active profile.
+- `bridle sync`, `status`, `add`, `remove`, `list`, and `import` always operate on the active profile.
+
 ## How it works
 
 ```
 ~/Bridle/                          ← Single source of truth
-├── mcp.json                        Canonical MCP config (JSON)
-├── skills/                         Shared skills directory
+├── mcp.json                        → symlink to active profile mcp.json
+├── skills/                         → symlink to active profile skills/
+├── profiles/                       Named profile directories
+│   ├── default/
+│   │   ├── mcp.json
+│   │   └── skills/
+│   ├── work/
+│   │   ├── mcp.json
+│   │   └── skills/
+│   └── my-startup/
+│       ├── mcp.json
+│       └── skills/
 ├── agents/                         Shared agent definitions
-└── config.json                     Sync state & drift hashes
+└── config.json                     Sync state, drift hashes & active profile
 
 bridle sync
   ├── Read ~/Bridle/mcp.json
