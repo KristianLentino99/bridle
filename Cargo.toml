@@ -5,8 +5,8 @@ edition = "2021"
 description = "Sync MCP servers, skills, and agents across all AI coding harnesses"
 authors = ["Kristian Lentino"]
 license = "MIT"
-repository = "https://github.com/kristianlentino/bridle"
-homepage = "https://github.com/kristianlentino/bridle"
+repository = "https://github.com/KristianLentino99/bridle"
+homepage = "https://github.com/KristianLentino99/bridle"
 keywords = ["mcp", "ai", "cli", "sync", "harness"]
 categories = ["command-line-utilities"]
 

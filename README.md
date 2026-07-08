@@ -47,7 +47,7 @@ Cross-platform: **macOS**, **Linux**, **Windows**.
 ### Homebrew (macOS)
 
 ```bash
-brew install kristianlentino/tap/bridle
+brew install KristianLentino99/tap/bridle
 ```
 
 ### Cargo (any platform)
@@ -59,7 +59,7 @@ cargo install bridle
 ### Build from source
 
 ```bash
-git clone https://github.com/kristianlentino/bridle.git
+git clone https://github.com/KristianLentino99/bridle.git
 cd bridle
 cargo build --release
 sudo cp target/release/bridle /usr/local/bin/
@@ -257,7 +257,7 @@ git push
 5. **Install**
 
 ```bash
-brew install kristianlentino/tap/bridle
+brew install KristianLentino99/tap/bridle
 ```
 
 ### Cargo publish (alternative)

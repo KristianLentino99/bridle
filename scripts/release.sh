@@ -39,6 +39,6 @@ echo "✅ Release artifacts in $RELEASE_DIR:"
 ls -la
 echo ""
 echo "Next steps:"
-echo "1. Create a GitHub release at https://github.com/kristianlentino/bridle/releases/new?tag=${VERSION}"
+echo "1. Create a GitHub release at https://github.com/KristianLentino99/bridle/releases/new?tag=${VERSION}"
 echo "2. Upload the .tar.gz files"
 echo "3. Create homebrew-tap repo with the formula below"
