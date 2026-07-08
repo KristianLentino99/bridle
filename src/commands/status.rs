@@ -2,19 +2,20 @@ use crate::bridle_home;
 use crate::harness;
 use crate::mcp_config::McpConfig;
 use crate::platform;
+use crate::profile;
 use crate::skills::{self, SkillsStatusState};
 use crate::sync;
 
 pub fn run() {
     let plat = platform::detect();
     let home = bridle_home();
-    let master_path = home.join("mcp.json");
+    let master_path = profile::active_mcp_path(&home);
 
     let master = if master_path.exists() {
         let raw = std::fs::read_to_string(&master_path).unwrap_or_default();
         McpConfig::from_json(&raw).unwrap_or_default()
     } else {
-        println!("No master config at {}/mcp.json", home.display());
+        println!("No master config at {}", master_path.display());
         return;
     };
 
@@ -70,7 +71,7 @@ pub fn run() {
 
     // ── Skills status ─────────────────────────────────────────────────
     println!();
-    let master_skills_dir = home.join("skills");
+    let master_skills_dir = profile::active_skills_path(&home);
     let skill_statuses = skills::status_skills_all(&master_skills_dir, plat);
     let mut any_skill_support = false;
     for report in &skill_statuses {

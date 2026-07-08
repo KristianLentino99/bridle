@@ -387,9 +387,8 @@ fn remove_skill_deletes_from_master_skills() {
     assert!(!skill_dir.exists());
 }
 
-
 #[test]
-fn init_creates_default_profile_with_symlinks() {
+fn init_creates_default_profile() {
     let t = CliTest::new();
     t.run_ok(&["init"]);
 
@@ -397,16 +396,9 @@ fn init_creates_default_profile_with_symlinks() {
     assert!(t.profile_mcp_json("default").exists());
     assert!(t.profile_dir("default").join("skills").exists());
 
-    let mcp_target = std::fs::read_link(&t.mcp_json()).unwrap();
-    assert_eq!(mcp_target, t.profile_mcp_json("default"));
-
-    let skills_target = std::fs::read_link(t.bridle_home.join("skills")).unwrap();
-    assert_eq!(skills_target, t.profile_dir("default").join("skills"));
-
-    let config = t.read_mcp_json();
+    let config = t.read_profile_mcp_json("default");
     assert!(config["mcpServers"].as_object().unwrap().is_empty());
 }
-
 
 #[test]
 fn profile_create_makes_named_profile() {
@@ -422,7 +414,6 @@ fn profile_create_makes_named_profile() {
     assert!(config["mcpServers"].as_object().unwrap().is_empty());
 }
 
-
 #[test]
 fn profile_list_shows_profiles_and_active_marker() {
     let t = CliTest::new();
@@ -437,7 +428,7 @@ fn profile_list_shows_profiles_and_active_marker() {
 }
 
 #[test]
-fn profile_switch_repoints_symlinks() {
+fn profile_switch_changes_active_profile() {
     let t = CliTest::new();
     t.run_ok(&["init"]);
     t.run_ok(&["profile", "create", "work"]);
@@ -448,17 +439,20 @@ fn profile_switch_repoints_symlinks() {
     // Switch without sync.
     let output = t.run_ok(&["profile", "switch", "work", "--no-sync"]);
     let stdout = t.stdout(&output);
-    assert!(stdout.contains("Switched to profile 'work'"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("Switched to profile 'work'"),
+        "stdout: {stdout}"
+    );
 
-    let mcp_target = std::fs::read_link(&t.mcp_json()).unwrap();
-    assert_eq!(mcp_target, t.profile_mcp_json("work"));
-
-    let skills_target = std::fs::read_link(t.bridle_home.join("skills")).unwrap();
-    assert_eq!(skills_target, t.profile_dir("work").join("skills"));
-
-    // work profile should be empty.
-    let config = t.read_mcp_json();
+    // work profile should be empty; default should still contain posthog.
+    let config = t.read_profile_mcp_json("work");
     assert!(config["mcpServers"].as_object().unwrap().is_empty());
+
+    let default_config = t.read_profile_mcp_json("default");
+    assert!(default_config["mcpServers"]
+        .as_object()
+        .unwrap()
+        .contains_key("posthog"));
 }
 
 #[test]
@@ -469,10 +463,16 @@ fn profile_clone_copies_profile_contents() {
 
     let output = t.run_ok(&["profile", "clone", "default", "work"]);
     let stdout = t.stdout(&output);
-    assert!(stdout.contains("Cloned profile 'default' to 'work'"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("Cloned profile 'default' to 'work'"),
+        "stdout: {stdout}"
+    );
 
     let cloned = t.read_profile_mcp_json("work");
-    assert!(cloned["mcpServers"].as_object().unwrap().contains_key("posthog"));
+    assert!(cloned["mcpServers"]
+        .as_object()
+        .unwrap()
+        .contains_key("posthog"));
 }
 
 #[test]
@@ -497,8 +497,10 @@ fn profile_rename_updates_directory_and_active_state() {
     assert!(!t.profile_dir("work").exists());
     assert!(t.profile_dir("job").exists());
 
-    let mcp_target = std::fs::read_link(&t.mcp_json()).unwrap();
-    assert_eq!(mcp_target, t.profile_mcp_json("job"));
+    // Active profile should still resolve to the renamed profile.
+    let list_output = t.run_ok(&["profile", "list"]);
+    let stdout = t.stdout(&list_output);
+    assert!(stdout.contains("job *"), "stdout: {stdout}");
 }
 
 #[test]
@@ -516,10 +518,10 @@ fn profile_auto_migrates_legacy_layout() {
 
     assert!(t.profile_dir("default").exists());
     let migrated = t.read_profile_mcp_json("default");
-    assert!(migrated["mcpServers"].as_object().unwrap().contains_key("legacy"));
-
-    let mcp_target = std::fs::read_link(&t.mcp_json()).unwrap();
-    assert_eq!(mcp_target, t.profile_mcp_json("default"));
+    assert!(migrated["mcpServers"]
+        .as_object()
+        .unwrap()
+        .contains_key("legacy"));
 }
 
 #[test]
@@ -559,7 +561,8 @@ fn profile_switch_warns_when_watch_marker_present() {
         "combined: {combined}"
     );
 
-    // Because we answered 'n', the active symlink should still point to default.
-    let mcp_target = std::fs::read_link(&t.mcp_json()).unwrap();
-    assert_eq!(mcp_target, t.profile_mcp_json("default"));
+    // Because we answered 'n', the active profile should still be default.
+    let list_output = t.run_ok(&["profile", "list"]);
+    let stdout = t.stdout(&list_output);
+    assert!(stdout.contains("default *"), "stdout: {stdout}");
 }

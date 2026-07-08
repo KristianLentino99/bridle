@@ -209,11 +209,7 @@ fn cmd_clone(home: &std::path::Path, from: &str, to: &str) {
     }
 }
 
-fn copy_profile(
-    home: &std::path::Path,
-    from: &str,
-    to: &str,
-) -> Result<(), std::io::Error> {
+fn copy_profile(home: &std::path::Path, from: &str, to: &str) -> Result<(), std::io::Error> {
     profile::create_profile(home, to)?;
 
     let from_mcp = profile::profile_mcp_path(home, from);

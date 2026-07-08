@@ -1,7 +1,8 @@
 use crate::bridle_home;
-use crate::mcp_config::McpConfig;
-use crate::skills;
 use crate::cli::RemoveTarget;
+use crate::mcp_config::McpConfig;
+use crate::profile;
+use crate::skills;
 use clap::ValueEnum;
 
 pub fn run(args: Vec<String>) {
@@ -28,12 +29,12 @@ pub fn run(args: Vec<String>) {
     let remove_skills = matches!(what, RemoveTarget::Skills | RemoveTarget::All);
 
     if remove_mcp {
-        let mcp_path = home.join("mcp.json");
+        let mcp_path = profile::active_mcp_path(&home);
         let mut config = if mcp_path.exists() {
             let raw = std::fs::read_to_string(&mcp_path).unwrap_or_default();
             McpConfig::from_json(&raw).unwrap_or_default()
         } else {
-            eprintln!("No master config at {}/mcp.json", home.display());
+            eprintln!("No master config at {}", mcp_path.display());
             return;
         };
 
@@ -47,7 +48,7 @@ pub fn run(args: Vec<String>) {
     }
 
     if remove_skills {
-        let skills_dir = home.join("skills");
+        let skills_dir = profile::active_skills_path(&home);
         match skills::remove_skill(&skills_dir, &name) {
             Ok(true) => println!("✅ Removed skill '{}' from ~/Bridle/skills/", name),
             Ok(false) => println!("⚠️  Skill '{}' not found in ~/Bridle/skills/", name),

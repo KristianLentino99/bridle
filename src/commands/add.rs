@@ -1,5 +1,6 @@
 use crate::bridle_home;
 use crate::mcp_config::{McpConfig, McpServer};
+use crate::profile;
 use std::collections::BTreeMap;
 
 pub fn run(
@@ -10,7 +11,7 @@ pub fn run(
     env_pairs: Vec<String>,
 ) {
     let home = bridle_home();
-    let mcp_path = home.join("mcp.json");
+    let mcp_path = profile::active_mcp_path(&home);
 
     let mut config = if mcp_path.exists() {
         let raw = std::fs::read_to_string(&mcp_path).unwrap_or_default();

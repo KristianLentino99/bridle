@@ -11,24 +11,24 @@ use std::path::{Path, PathBuf};
 pub fn run(watch: bool, force: bool, no_skills: bool) {
     let plat = platform::detect();
     let home = bridle_home();
-    let master_path = home.join("mcp.json");
+    let master_path = profile::active_mcp_path(&home);
 
     // Read master config
     let master = if master_path.exists() {
         let raw = std::fs::read_to_string(&master_path).unwrap_or_default();
         McpConfig::from_json(&raw).unwrap_or_else(|e| {
-            eprintln!("Error reading {}/mcp.json: {}", home.display(), e);
+            eprintln!("Error reading {}: {}", master_path.display(), e);
             std::process::exit(1);
         })
     } else {
         eprintln!(
-            "No master config found at {}/mcp.json. Run 'bridle init' first.",
-            home.display()
+            "No master config found at {}. Run 'bridle init' first.",
+            master_path.display()
         );
         std::process::exit(1);
     };
 
-    let master_skills_dir = home.join("skills");
+    let master_skills_dir = profile::active_skills_path(&home);
 
     if watch {
         run_watch(plat, home, master, master_skills_dir, force, no_skills);
@@ -206,7 +206,7 @@ fn run_watch(
         while rx.try_recv().is_ok() {}
 
         // Reload master config
-        let master_path = home.join("mcp.json");
+        let master_path = profile::active_mcp_path(&home);
         let master = if master_path.exists() {
             let raw = std::fs::read_to_string(&master_path).unwrap_or_default();
             McpConfig::from_json(&raw).unwrap_or_default()

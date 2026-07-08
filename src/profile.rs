@@ -39,6 +39,21 @@ pub fn active_skills_symlink(bridle_home: &Path) -> PathBuf {
     bridle_home.join("skills")
 }
 
+/// Returns the canonical MCP config path for the active profile.
+///
+/// Code should use this instead of `bridle_home().join("mcp.json")` so that
+/// profile switching works on platforms where symlinks are not available.
+pub fn active_mcp_path(bridle_home: &Path) -> PathBuf {
+    let name = active_profile(bridle_home).unwrap_or_else(|| "default".to_string());
+    profile_mcp_path(bridle_home, &name)
+}
+
+/// Returns the canonical skills directory path for the active profile.
+pub fn active_skills_path(bridle_home: &Path) -> PathBuf {
+    let name = active_profile(bridle_home).unwrap_or_else(|| "default".to_string());
+    profile_skills_path(bridle_home, &name)
+}
+
 /// Returns the path to the watch-mode marker file.
 pub fn watch_marker_path(bridle_home: &Path) -> PathBuf {
     bridle_home.join(".watch")

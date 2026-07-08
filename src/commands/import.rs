@@ -1,10 +1,11 @@
 use crate::bridle_home;
+use crate::cli::ImportTarget;
 use crate::harness;
 use crate::mcp_config::McpConfig;
 use crate::platform;
+use crate::profile;
 use crate::skills;
 use crate::sync;
-use crate::cli::ImportTarget;
 use std::path::PathBuf;
 
 pub fn run(
@@ -34,7 +35,7 @@ pub fn run(
 fn cmd_import_mcp(harness_id: &str, all: bool, force: bool) {
     let plat = platform::detect();
     let home = bridle_home();
-    let mcp_path = home.join("mcp.json");
+    let mcp_path = profile::active_mcp_path(&home);
 
     // Load or create master
     let mut master = if mcp_path.exists() {
@@ -132,7 +133,7 @@ fn cmd_import_mcp(harness_id: &str, all: bool, force: bool) {
 
 fn cmd_import_skills(source: Option<PathBuf>, force: bool, link: bool, update: bool) {
     let source = source.unwrap_or_else(|| platform::home_dir().join(".agents").join("skills"));
-    let target = bridle_home().join("skills");
+    let target = profile::active_skills_path(&bridle_home());
 
     if !source.exists() {
         eprintln!(

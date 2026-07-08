@@ -1,15 +1,16 @@
 use crate::bridle_home;
 use crate::mcp_config::McpConfig;
+use crate::profile;
 
 pub fn run() {
     let home = bridle_home();
-    let mcp_path = home.join("mcp.json");
+    let mcp_path = profile::active_mcp_path(&home);
 
     let config = if mcp_path.exists() {
         let raw = std::fs::read_to_string(&mcp_path).unwrap_or_default();
         McpConfig::from_json(&raw).unwrap_or_default()
     } else {
-        println!("No master config at {}/mcp.json", home.display());
+        println!("No master config at {}", mcp_path.display());
         return;
     };
 
