@@ -370,12 +370,7 @@ fn import_skills_copies_from_source() {
     let stdout = t.stdout(&output);
     assert!(stdout.contains("caveman"), "stdout: {stdout}");
 
-    assert!(t
-        .bridle_home
-        .join("skills")
-        .join("caveman")
-        .join("SKILL.md")
-        .exists());
+    assert!(t.skills_dir().join("caveman").join("SKILL.md").exists());
 }
 
 #[test]
