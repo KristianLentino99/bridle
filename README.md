@@ -46,7 +46,7 @@ Cross-platform: **macOS**, **Linux**, **Windows**.
 
 ## Install
 
-### Homebrew (macOS)
+### Homebrew (macOS/Linux)
 
 ```bash
 brew install KristianLentino99/tap/bridle
@@ -212,51 +212,57 @@ src/
 - [x] Skills sync (`skills/` directory → harness skills dirs)
 - [ ] Agent sync (Codex TOML agents)
 - [x] `bridle import` — harvest config from harness → master
-- [ ] Homebrew distribution (`brew install bridle`)
+- [x] Homebrew distribution (`brew install KristianLentino99/tap/bridle`)
 - [ ] Nix flake
 
 ## Contributing
 
 ### Publishing a new release
 
-1. **Create a GitHub release with binary artifacts**
+1. **Tag and push the release**
 
 ```bash
-# Build release artifacts (macOS ARM, Intel, Linux)
-./scripts/release.sh v0.1.0
-
-# Create GitHub release and upload binaries
-gh release create v0.1.0 \
-  --title "bridle v0.1.0" \
-  --notes "Initial release" \
-  release/v0.1.0/bridle-v0.1.0-*.tar.gz
+VERSION=v0.1.0
+cargo test
+git tag -a "$VERSION" -m "bridle $VERSION"
+git push origin "$VERSION"
 ```
 
-2. **Create a Homebrew tap repository**
-
-Create a new public GitHub repo: `kristianlentino/homebrew-tap`
-
-3. **Update the formula with SHA256 hashes**
+2. **Update the Homebrew formula SHA**
 
 ```bash
-# Get hashes from the GitHub release
-shasum -a 256 release/v0.1.0/bridle-v0.1.0-*.tar.gz
-
-# Replace REPLACE_WITH_ACTUAL_SHA256_* in homebrew/bridle.rb with the real values
+VERSION=v0.1.0
+curl -L "https://github.com/KristianLentino99/bridle/archive/refs/tags/$VERSION.tar.gz" \
+  | shasum -a 256
 ```
 
-4. **Push formula to the tap**
+Put that SHA in `homebrew/bridle.rb`.
+
+3. **Create the Homebrew tap repository**
+
+Create a public GitHub repo: `KristianLentino99/homebrew-tap`.
+
+4. **Push the formula to the tap**
 
 ```bash
+git clone git@github.com:KristianLentino99/homebrew-tap.git ../homebrew-tap
 mkdir -p ../homebrew-tap/Formula
-cp homebrew/bridle.rb ../homebrew-tap/Formula/
+cp homebrew/bridle.rb ../homebrew-tap/Formula/bridle.rb
 cd ../homebrew-tap
 git add Formula/bridle.rb
-git commit -m "bridle v0.1.0"
+git commit -m "Add bridle 0.1.0"
 git push
 ```
 
-5. **Install**
+5. **Validate**
+
+```bash
+brew audit --formula --strict KristianLentino99/tap/bridle
+brew install --build-from-source KristianLentino99/tap/bridle
+brew test KristianLentino99/tap/bridle
+```
+
+6. **Install**
 
 ```bash
 brew install KristianLentino99/tap/bridle
