@@ -1,0 +1,26 @@
+[package]
+name = "bridle"
+version = "0.1.0"
+edition = "2021"
+description = "Sync MCP servers, skills, and agents across all AI coding harnesses"
+authors = ["Kristian Lentino"]
+license = "MIT"
+repository = "https://github.com/kristianlentino/bridle"
+homepage = "https://github.com/kristianlentino/bridle"
+keywords = ["mcp", "ai", "cli", "sync", "harness"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+dirs = "6"
+thiserror = "2"
+sha2 = "0.10"
+notify = "7"
+tempfile = "3"
+
+[dev-dependencies]
+tempfile = "3"
+assert_matches = "1.5"
