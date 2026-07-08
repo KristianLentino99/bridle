@@ -19,6 +19,9 @@ pub struct SyncState {
     /// Per-harness last-known canonical skills directory hash.
     #[serde(default)]
     pub last_skill_hashes: BTreeMap<String, String>,
+    /// Name of the currently active profile.
+    #[serde(default)]
+    pub active_profile: Option<String>,
 }
 
 impl SyncState {
