@@ -56,12 +56,44 @@ impl CliTest {
     }
 
     fn mcp_json(&self) -> PathBuf {
-        self.bridle_home.join("mcp.json")
+        // Resolve the active profile path so tests work on Windows where the
+        // legacy ~/Bridle/mcp.json path may be a copy instead of a symlink.
+        self.active_mcp_json()
+    }
+
+    fn active_mcp_json(&self) -> PathBuf {
+        let config_path = self.bridle_home.join("config.json");
+        let active = if config_path.exists() {
+            let raw = std::fs::read_to_string(&config_path).unwrap();
+            let config: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            config["active_profile"]
+                .as_str()
+                .unwrap_or("default")
+                .to_string()
+        } else {
+            "default".to_string()
+        };
+        self.profile_mcp_json(&active)
     }
 
     fn read_mcp_json(&self) -> serde_json::Value {
         let raw = std::fs::read_to_string(self.mcp_json()).unwrap();
         serde_json::from_str(&raw).unwrap()
+    }
+
+    fn skills_dir(&self) -> PathBuf {
+        let config_path = self.bridle_home.join("config.json");
+        let active = if config_path.exists() {
+            let raw = std::fs::read_to_string(&config_path).unwrap();
+            let config: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            config["active_profile"]
+                .as_str()
+                .unwrap_or("default")
+                .to_string()
+        } else {
+            "default".to_string()
+        };
+        self.profile_dir(&active).join("skills")
     }
 
     fn harness_base(&self, spec: &'static HarnessSpec) -> PathBuf {
@@ -352,7 +384,7 @@ fn sync_skills_to_installed_harness() {
     t.run_ok(&["init"]);
 
     // Add a skill to the master skills dir.
-    let skill_dir = t.bridle_home.join("skills").join("caveman");
+    let skill_dir = t.skills_dir().join("caveman");
     std::fs::create_dir_all(&skill_dir).unwrap();
     std::fs::write(skill_dir.join("SKILL.md"), "# caveman").unwrap();
 
@@ -379,7 +411,7 @@ fn remove_skill_deletes_from_master_skills() {
     let t = CliTest::new();
     t.run_ok(&["init"]);
 
-    let skill_dir = t.bridle_home.join("skills").join("caveman");
+    let skill_dir = t.skills_dir().join("caveman");
     std::fs::create_dir_all(&skill_dir).unwrap();
     std::fs::write(skill_dir.join("SKILL.md"), "# caveman").unwrap();
 
@@ -507,8 +539,9 @@ fn profile_rename_updates_directory_and_active_state() {
 fn profile_auto_migrates_legacy_layout() {
     let t = CliTest::new();
     std::fs::create_dir_all(&t.bridle_home).unwrap();
+    // Write to the legacy path before migration has happened.
     std::fs::write(
-        &t.mcp_json(),
+        t.bridle_home.join("mcp.json"),
         r#"{"mcpServers":{"legacy":{"command":"npx"}}}"#,
     )
     .unwrap();
