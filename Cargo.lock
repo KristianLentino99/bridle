@@ -80,7 +80,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bridle"
+name = "bridle-harness"
 version = "0.2.0"
 dependencies = [
  "assert_matches",
