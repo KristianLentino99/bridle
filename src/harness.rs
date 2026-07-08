@@ -39,8 +39,10 @@ impl HarnessSpec {
             Platform::Linux => self.linux_base,
             Platform::Windows => self.windows_base,
         };
-        // Replace `~` with home directory
+        // Replace `~/` or `~\` with home directory
         if let Some(stripped) = raw.strip_prefix("~/") {
+            home.join(stripped)
+        } else if let Some(stripped) = raw.strip_prefix(r"~\") {
             home.join(stripped)
         } else {
             PathBuf::from(raw)
