@@ -76,7 +76,16 @@ mod tests {
     #[test]
     fn detect_returns_current_platform() {
         let platform = detect();
-        assert_eq!(platform, Platform::MacOS);
+        let expected = if cfg!(target_os = "macos") {
+            Platform::MacOS
+        } else if cfg!(target_os = "linux") {
+            Platform::Linux
+        } else if cfg!(target_os = "windows") {
+            Platform::Windows
+        } else {
+            Platform::MacOS // fallback for unknown platforms
+        };
+        assert_eq!(platform, expected);
     }
 
     #[test]

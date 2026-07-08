@@ -378,13 +378,13 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn detect_all_finds_nothing_in_empty_temp() {
-        // On macOS, real harnesses exist. But we can test the function runs.
+    fn detect_all_returns_all_harnesses() {
+        // The function should return one entry per harness regardless of
+        // whether any are installed on the current machine.
         let statuses = detect_all(Platform::MacOS);
         assert_eq!(statuses.len(), 7);
-        // At least pi should exist on this machine
-        let pi_status = statuses.iter().find(|s| s.spec.id == "pi").unwrap();
-        assert!(pi_status.installed);
+        let ids: Vec<&str> = statuses.iter().map(|s| s.spec.id).collect();
+        assert!(ids.contains(&"pi"));
     }
 
     #[test]
