@@ -2,7 +2,7 @@
 //! platform-specific config paths.
 
 use crate::platform::Platform;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HarnessSpec {
@@ -34,6 +34,11 @@ impl HarnessSpec {
     /// Resolve the base directory for the current platform.
     pub fn base_dir(&self, platform: Platform) -> PathBuf {
         let home = crate::platform::home_dir();
+        self.base_dir_in_home(platform, &home)
+    }
+
+    /// Resolve the base directory for a platform using an explicit home directory.
+    pub fn base_dir_in_home(&self, platform: Platform, home: &Path) -> PathBuf {
         let raw = match platform {
             Platform::MacOS => self.macos_base,
             Platform::Linux => self.linux_base,
@@ -41,9 +46,9 @@ impl HarnessSpec {
         };
         // Replace `~/` or `~\` with home directory
         if let Some(stripped) = raw.strip_prefix("~/") {
-            home.join(stripped)
+            join_home_relative(home, stripped)
         } else if let Some(stripped) = raw.strip_prefix(r"~\") {
-            home.join(stripped)
+            join_home_relative(home, stripped)
         } else {
             PathBuf::from(raw)
         }
@@ -53,6 +58,14 @@ impl HarnessSpec {
     pub fn mcp_config_path(&self, platform: Platform) -> PathBuf {
         self.base_dir(platform).join(self.mcp_config_file)
     }
+}
+
+fn join_home_relative(home: &Path, relative: &str) -> PathBuf {
+    let mut path = home.to_path_buf();
+    for component in relative.split(['/', '\\']).filter(|s| !s.is_empty()) {
+        path.push(component);
+    }
+    path
 }
 
 /// All supported harnesses, in registry order.

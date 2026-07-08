@@ -28,15 +28,17 @@ Before:                           After:
 
 ## Supported harnesses
 
-| Harness | MCP format | Skills | Agents |
-|---------|-----------|--------|--------|
-| Pi Coding Agent | JSON + imports | ✅ | — |
-| Claude Desktop | JSON | built-in | — |
-| Claude Code | JSON | project-local | — |
-| Cursor | JSON | — | — |
-| VS Code | JSON | — | — |
-| Codex CLI | TOML | ✅ | ✅ |
-| Kimi Code | TOML | — | — |
+| Harness | MCP sync target | Skills sync | Agent sync | Notes |
+|---------|-----------------|-------------|------------|-------|
+| Pi Coding Agent | `mcp.json` (JSON + imports) | ✅ | — | Preserves imports |
+| Claude Desktop | `claude_desktop_config.json` (JSON) | — | — | — |
+| Claude Code | `mcp_servers.json` (JSON) | — | — | — |
+| Cursor | `mcp.json` (JSON) | — | — | — |
+| VS Code | `mcp.json` (JSON) | — | — | — |
+| Codex CLI | `config.toml` (TOML) | ✅ | Planned | — |
+| Kimi Code | `mcp.json` (JSON symlink/copy) | — | — | MCP sync works; some third-party OpenAI-compatible providers can fail in Kimi Code |
+
+Skills sync means Bridle mirrors `~/Bridle/skills/` into the harness's configured skills directory. Kimi also imports MCP servers from `config.toml` as a fallback, but sync writes the supported `mcp.json` target. Known Kimi Code caveat: with some third-party OpenAI-compatible providers, Kimi Code can send `max_tokens` above the provider output limit and fail the first turn; set `KIMI_MODEL_MAX_COMPLETION_TOKENS` to the provider's limit as a workaround.
 
 Cross-platform: **macOS**, **Linux**, **Windows**.
 

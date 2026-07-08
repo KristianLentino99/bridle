@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 use std::process::Output;
 
+use bridle::harness::{HarnessSpec, CURSOR, PI};
+use bridle::platform::{self, Platform};
+
 /// Integration tests for the `bridle` CLI.
 ///
 /// Each test runs the compiled binary in a temporary home directory using
@@ -61,21 +64,35 @@ impl CliTest {
         serde_json::from_str(&raw).unwrap()
     }
 
-    fn harness_dir(&self, name: &str) -> PathBuf {
-        self.home.join(name)
+    fn harness_base(&self, spec: &'static HarnessSpec) -> PathBuf {
+        spec.base_dir_in_home(platform::detect(), &self.home)
     }
 
     fn write_cursor_config(&self, contents: &str) {
-        let dir = self.harness_dir(".cursor");
+        let dir = self.harness_base(&CURSOR);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("mcp.json"), contents).unwrap();
     }
 
     fn write_pi_config(&self, contents: &str) {
-        let dir = self.harness_dir(".pi").join("agent");
+        let dir = self.harness_base(&PI);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("mcp.json"), contents).unwrap();
     }
+}
+
+#[test]
+fn test_harness_base_uses_platform_specific_layout() {
+    let t = CliTest::new();
+
+    assert_eq!(
+        PI.base_dir_in_home(Platform::Windows, &t.home),
+        t.home
+            .join("AppData")
+            .join("Roaming")
+            .join("pi")
+            .join("agent")
+    );
 }
 
 #[test]
@@ -163,13 +180,14 @@ fn sync_updates_installed_harness() {
     t.run_ok(&["add", "posthog", "--url", "https://mcp.posthog.com/mcp"]);
 
     // Fake a Cursor install with no existing MCP config.
-    std::fs::create_dir_all(t.harness_dir(".cursor")).unwrap();
+    let cursor_base = t.harness_base(&CURSOR);
+    std::fs::create_dir_all(&cursor_base).unwrap();
 
     let output = t.run_ok(&["sync"]);
     let stdout = t.stdout(&output);
     assert!(stdout.contains("cursor — synced"), "stdout: {stdout}");
 
-    let cursor_config = std::fs::read_to_string(t.harness_dir(".cursor").join("mcp.json")).unwrap();
+    let cursor_config = std::fs::read_to_string(cursor_base.join("mcp.json")).unwrap();
     assert!(cursor_config.contains("posthog"));
 }
 
@@ -212,7 +230,7 @@ fn sync_force_overwrites_drift() {
         "stdout: {stdout}"
     );
 
-    let cursor_config = std::fs::read_to_string(t.harness_dir(".cursor").join("mcp.json")).unwrap();
+    let cursor_config = std::fs::read_to_string(t.harness_base(&CURSOR).join("mcp.json")).unwrap();
     assert!(cursor_config.contains("posthog"));
 }
 
@@ -336,8 +354,7 @@ fn sync_skills_to_installed_harness() {
     );
 
     assert!(t
-        .harness_dir(".pi")
-        .join("agent")
+        .harness_base(&PI)
         .join("skills")
         .join("caveman")
         .join("SKILL.md")
