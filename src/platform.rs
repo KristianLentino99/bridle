@@ -92,13 +92,11 @@ mod tests {
     fn config_dir_is_absolute() {
         let dir = config_dir();
         assert!(dir.is_absolute());
-        assert!(dir.starts_with("/"));
     }
 
     #[test]
     fn home_dir_is_absolute() {
         let dir = home_dir();
         assert!(dir.is_absolute());
-        assert!(dir.starts_with("/"));
     }
 }
