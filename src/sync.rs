@@ -180,10 +180,9 @@ pub fn sync_one(
         match adapter.write_config(master, platform) {
             Ok(()) => {
                 let effective = adapter.effective_config(master, platform);
-                state.last_hashes.insert(
-                    spec.id.to_string(),
-                    hash_config(&effective),
-                );
+                state
+                    .last_hashes
+                    .insert(spec.id.to_string(), hash_config(&effective));
                 SyncReport {
                     harness_id: spec.id,
                     action: SyncAction::Updated { forced: true },

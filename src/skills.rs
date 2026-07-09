@@ -23,7 +23,10 @@ pub struct SkillsSyncReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SkillsSyncAction {
     /// Skills were installed or updated on the harness.
-    Updated { installed: Vec<String>, forced: bool },
+    Updated {
+        installed: Vec<String>,
+        forced: bool,
+    },
     /// Harness already mirrors the canonical skills directory.
     AlreadyInSync,
     /// Harness is not installed.
@@ -715,10 +718,20 @@ mod tests {
         let spec = Box::leak(Box::new(spec));
 
         let mut state = SyncState::default();
-        let report = sync_skills_one(spec, &master_skills, &mut state, Platform::MacOS, false, false);
+        let report = sync_skills_one(
+            spec,
+            &master_skills,
+            &mut state,
+            Platform::MacOS,
+            false,
+            false,
+        );
 
         match report.action {
-            SkillsSyncAction::Updated { installed, forced: _ } => {
+            SkillsSyncAction::Updated {
+                installed,
+                forced: _,
+            } => {
                 assert_eq!(installed, vec!["caveman"])
             }
             other => panic!("expected Updated, got {:?}", other),
@@ -759,7 +772,14 @@ mod tests {
         let spec = Box::leak(Box::new(spec));
 
         let mut state = SyncState::default();
-        let report = sync_skills_one(spec, &master_skills, &mut state, Platform::MacOS, false, false);
+        let report = sync_skills_one(
+            spec,
+            &master_skills,
+            &mut state,
+            Platform::MacOS,
+            false,
+            false,
+        );
 
         assert_eq!(
             report.action,
@@ -796,7 +816,14 @@ mod tests {
         let spec = Box::leak(Box::new(spec));
 
         let mut state = SyncState::default();
-        sync_skills_one(spec, &master_skills, &mut state, Platform::MacOS, false, false);
+        sync_skills_one(
+            spec,
+            &master_skills,
+            &mut state,
+            Platform::MacOS,
+            false,
+            false,
+        );
 
         assert!(harness_skills.join(".system").exists());
         assert!(
@@ -832,10 +859,20 @@ mod tests {
         let spec = Box::leak(Box::new(spec));
 
         let mut state = SyncState::default();
-        let report = sync_skills_one(spec, &master_skills, &mut state, Platform::MacOS, true, false);
+        let report = sync_skills_one(
+            spec,
+            &master_skills,
+            &mut state,
+            Platform::MacOS,
+            true,
+            false,
+        );
 
         match report.action {
-            SkillsSyncAction::Updated { installed, forced: _ } => {
+            SkillsSyncAction::Updated {
+                installed,
+                forced: _,
+            } => {
                 assert_eq!(installed, vec!["caveman"])
             }
             other => panic!("expected Updated, got {:?}", other),
@@ -886,7 +923,14 @@ mod tests {
         let spec = Box::leak(Box::new(spec));
 
         let mut state = SyncState::default();
-        let report = sync_skills_one(spec, &master_skills, &mut state, Platform::MacOS, false, false);
+        let report = sync_skills_one(
+            spec,
+            &master_skills,
+            &mut state,
+            Platform::MacOS,
+            false,
+            false,
+        );
 
         assert_eq!(report.action, SkillsSyncAction::AlreadyInSync);
     }
@@ -915,7 +959,14 @@ mod tests {
         let spec = Box::leak(Box::new(spec));
 
         let mut state = SyncState::default();
-        let report = sync_skills_one(spec, &master_skills, &mut state, Platform::MacOS, false, false);
+        let report = sync_skills_one(
+            spec,
+            &master_skills,
+            &mut state,
+            Platform::MacOS,
+            false,
+            false,
+        );
 
         assert_eq!(report.action, SkillsSyncAction::NoSkillsDir);
     }

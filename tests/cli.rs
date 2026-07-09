@@ -696,7 +696,10 @@ fn sync_dry_run_force_reports_overwrite() {
         stdout.contains("cursor — would overwrite drift"),
         "stdout: {stdout}"
     );
-    assert!(stdout.contains("- modified (would remove)"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("- modified (would remove)"),
+        "stdout: {stdout}"
+    );
     assert!(stdout.contains("+ posthog (would add)"), "stdout: {stdout}");
 
     // Verify no actual write happened.

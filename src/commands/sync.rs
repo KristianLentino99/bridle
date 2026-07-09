@@ -31,7 +31,15 @@ pub fn run(watch: bool, force: bool, no_skills: bool, dry_run: bool) {
     let master_skills_dir = profile::active_skills_path(&home);
 
     if watch {
-        run_watch(plat, home, master, master_skills_dir, force, no_skills, dry_run);
+        run_watch(
+            plat,
+            home,
+            master,
+            master_skills_dir,
+            force,
+            no_skills,
+            dry_run,
+        );
         return;
     }
 
@@ -48,6 +56,7 @@ pub fn run(watch: bool, force: bool, no_skills: bool, dry_run: bool) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_sync_pass(
     master: &McpConfig,
     master_skills_dir: &Path,
@@ -119,7 +128,10 @@ fn run_sync_pass(
                 SkillsSyncAction::Updated { installed, forced } if installed.is_empty() => {
                     println!("⏭️  {} skills — already up to date", report.harness_id);
                 }
-                SkillsSyncAction::Updated { installed, forced: false } => {
+                SkillsSyncAction::Updated {
+                    installed,
+                    forced: false,
+                } => {
                     if dry_run {
                         println!(
                             "📝 {} skills — would sync: {}",
@@ -134,7 +146,10 @@ fn run_sync_pass(
                         );
                     }
                 }
-                SkillsSyncAction::Updated { installed, forced: true } => {
+                SkillsSyncAction::Updated {
+                    installed,
+                    forced: true,
+                } => {
                     if dry_run {
                         println!(
                             "🔄 {} skills — would overwrite: {}",
@@ -205,7 +220,9 @@ fn print_mcp_dry_run_details(master: &McpConfig, harness_id: &str, plat: platfor
         None => return,
     };
     let effective_master = adapter.effective_config(master, plat);
-    let harness_cfg = adapter.read_config(plat).unwrap_or_else(|_| McpConfig::new());
+    let harness_cfg = adapter
+        .read_config(plat)
+        .unwrap_or_else(|_| McpConfig::new());
     let diff = effective_master.diff_against(&harness_cfg);
 
     for name in &diff.added {
