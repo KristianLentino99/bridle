@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::adapters::{Adapter, JsonAdapter, KimiAdapter, PiAdapter, TomlAdapter};
+use crate::adapters::{
+    Adapter, ClaudeDesktopAdapter, JsonAdapter, KimiAdapter, PiAdapter, TomlAdapter,
+};
 use crate::harness::{HarnessSpec, McpFormat};
 use crate::mcp_config::McpConfig;
 use crate::platform::Platform;
@@ -48,7 +50,7 @@ impl SyncState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncAction {
     /// Harness updated with master config.
-    Updated,
+    Updated { forced: bool },
     /// Harness already in sync (hash matches).
     AlreadyInSync,
     /// Drift detected — manual modification on harness side.
@@ -83,6 +85,7 @@ pub fn hash_config(config: &McpConfig) -> String {
 pub fn adapter_for(spec: &'static HarnessSpec) -> Option<Box<dyn Adapter>> {
     match spec.id {
         "kimi" => Some(Box::new(KimiAdapter::new(spec))),
+        "claude-desktop" => Some(Box::new(ClaudeDesktopAdapter::new(spec))),
         _ => match spec.mcp_format {
             McpFormat::Json => Some(Box::new(JsonAdapter::new(spec))),
             McpFormat::JsonWithImports => Some(Box::new(PiAdapter::new(spec))),
@@ -92,11 +95,16 @@ pub fn adapter_for(spec: &'static HarnessSpec) -> Option<Box<dyn Adapter>> {
 }
 
 /// Sync master config to a single harness.
+///
+/// When `dry_run` is `true`, no files are written and `state` is not mutated,
+/// but the returned report reflects what would happen.
 pub fn sync_one(
     spec: &'static HarnessSpec,
     master: &McpConfig,
     state: &mut SyncState,
     platform: Platform,
+    force: bool,
+    dry_run: bool,
 ) -> SyncReport {
     let base = spec.base_dir(platform);
     if !base.exists() {
@@ -116,7 +124,10 @@ pub fn sync_one(
         }
     };
 
-    let master_hash = hash_config(master);
+    // Hash the config that will actually be written, not the raw master. Some
+    // adapters (e.g. Claude Desktop) filter unsupported servers before writing.
+    let effective_master = adapter.effective_config(master, platform);
+    let master_hash = hash_config(&effective_master);
     let current_hash = match adapter.read_config(platform) {
         Ok(cfg) => hash_config(&cfg),
         Err(_) => String::new(), // No existing config
@@ -124,14 +135,24 @@ pub fn sync_one(
 
     let last_known = state.last_hashes.get(spec.id).cloned();
 
-    if current_hash.is_empty() || Some(current_hash.clone()) == last_known {
+    let would_update = current_hash.is_empty() || Some(current_hash.clone()) == last_known;
+    let already_in_sync = current_hash == master_hash;
+    let drifted = !current_hash.is_empty() && !would_update && !already_in_sync;
+
+    if would_update {
         // No existing config, or it matches what we last wrote → safe to overwrite
+        if dry_run {
+            return SyncReport {
+                harness_id: spec.id,
+                action: SyncAction::Updated { forced: false },
+            };
+        }
         match adapter.write_config(master, platform) {
             Ok(()) => {
                 state.last_hashes.insert(spec.id.to_string(), master_hash);
                 SyncReport {
                     harness_id: spec.id,
-                    action: SyncAction::Updated,
+                    action: SyncAction::Updated { forced: false },
                 }
             }
             Err(e) => SyncReport {
@@ -139,12 +160,38 @@ pub fn sync_one(
                 action: SyncAction::Error(e.to_string()),
             },
         }
-    } else if current_hash == master_hash {
-        // Already matches master → skip
-        state.last_hashes.insert(spec.id.to_string(), master_hash);
+    } else if already_in_sync {
+        // Already matches effective master → skip
+        if !dry_run {
+            state.last_hashes.insert(spec.id.to_string(), master_hash);
+        }
         SyncReport {
             harness_id: spec.id,
             action: SyncAction::AlreadyInSync,
+        }
+    } else if drifted && force {
+        // Force: overwrite harness changes.
+        if dry_run {
+            return SyncReport {
+                harness_id: spec.id,
+                action: SyncAction::Updated { forced: true },
+            };
+        }
+        match adapter.write_config(master, platform) {
+            Ok(()) => {
+                let effective = adapter.effective_config(master, platform);
+                state
+                    .last_hashes
+                    .insert(spec.id.to_string(), hash_config(&effective));
+                SyncReport {
+                    harness_id: spec.id,
+                    action: SyncAction::Updated { forced: true },
+                }
+            }
+            Err(e) => SyncReport {
+                harness_id: spec.id,
+                action: SyncAction::Error(e.to_string()),
+            },
         }
     } else {
         // Drift: harness has been modified externally
@@ -159,10 +206,16 @@ pub fn sync_one(
 }
 
 /// Sync master config to all installed harnesses.
-pub fn sync_all(master: &McpConfig, state: &mut SyncState, platform: Platform) -> Vec<SyncReport> {
+pub fn sync_all(
+    master: &McpConfig,
+    state: &mut SyncState,
+    platform: Platform,
+    force: bool,
+    dry_run: bool,
+) -> Vec<SyncReport> {
     crate::harness::all()
         .iter()
-        .map(|spec| sync_one(spec, master, state, platform))
+        .map(|spec| sync_one(spec, master, state, platform, force, dry_run))
         .collect()
 }
 
