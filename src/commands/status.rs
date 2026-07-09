@@ -6,10 +6,15 @@ use crate::profile;
 use crate::skills::{self, SkillsStatusState};
 use crate::sync;
 
-pub fn run() {
+pub fn run(dry_run: bool) {
     let plat = platform::detect();
     let home = bridle_home();
     let master_path = profile::active_mcp_path(&home);
+
+    if dry_run {
+        println!("🔍 Dry run — status performs no writes");
+        println!();
+    }
 
     let master = if master_path.exists() {
         let raw = std::fs::read_to_string(&master_path).unwrap_or_default();

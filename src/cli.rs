@@ -29,9 +29,16 @@ pub enum Commands {
         /// Skip syncing the skills directory
         #[arg(long)]
         no_skills: bool,
+        /// Report planned actions without writing files
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Show diff between master and each harness
-    Status,
+    Status {
+        /// Report planned actions without writing files
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Add an MCP server to the master config
     Add {
         /// Server name

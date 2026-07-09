@@ -11,8 +11,9 @@ fn main() {
             watch,
             force,
             no_skills,
-        } => bridle::commands::sync::run(watch, force, no_skills),
-        Commands::Status => bridle::commands::status::run(),
+            dry_run,
+        } => bridle::commands::sync::run(watch, force, no_skills, dry_run),
+        Commands::Status { dry_run } => bridle::commands::status::run(dry_run),
         Commands::Add {
             name,
             command,

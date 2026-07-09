@@ -8,7 +8,7 @@ use crate::sync::{self, SyncAction, SyncState};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
 
-pub fn run(watch: bool, force: bool, no_skills: bool) {
+pub fn run(watch: bool, force: bool, no_skills: bool, dry_run: bool) {
     let plat = platform::detect();
     let home = bridle_home();
     let master_path = profile::active_mcp_path(&home);
@@ -31,7 +31,7 @@ pub fn run(watch: bool, force: bool, no_skills: bool) {
     let master_skills_dir = profile::active_skills_path(&home);
 
     if watch {
-        run_watch(plat, home, master, master_skills_dir, force, no_skills);
+        run_watch(plat, home, master, master_skills_dir, force, no_skills, dry_run);
         return;
     }
 
@@ -44,6 +44,7 @@ pub fn run(watch: bool, force: bool, no_skills: bool) {
         plat,
         force,
         no_skills,
+        dry_run,
     );
 }
 
@@ -55,15 +56,34 @@ fn run_sync_pass(
     plat: platform::Platform,
     force: bool,
     no_skills: bool,
+    dry_run: bool,
 ) {
+    if dry_run {
+        println!("🔍 Dry run — no files will be modified");
+        println!();
+    }
+
     // ── MCP sync ──────────────────────────────────────────────────────
-    let reports = sync::sync_all(master, state, plat);
+    let reports = sync::sync_all(master, state, plat, force, dry_run);
 
     let mut drift_detected = false;
     for report in &reports {
         match &report.action {
-            SyncAction::Updated => {
-                println!("✅ {} — synced", report.harness_id);
+            SyncAction::Updated { forced: false } => {
+                if dry_run {
+                    println!("📝 {} — would sync", report.harness_id);
+                    print_mcp_dry_run_details(master, report.harness_id, plat);
+                } else {
+                    println!("✅ {} — synced", report.harness_id);
+                }
+            }
+            SyncAction::Updated { forced: true } => {
+                if dry_run {
+                    println!("🔄 {} — would overwrite drift (--force)", report.harness_id);
+                    print_mcp_dry_run_details(master, report.harness_id, plat);
+                } else {
+                    println!("🔄 {} — drift overwritten (--force)", report.harness_id);
+                }
             }
             SyncAction::AlreadyInSync => {
                 println!("⏭️  {} — already up to date", report.harness_id);
@@ -72,27 +92,13 @@ fn run_sync_pass(
                 println!("⚠️  {} — not installed, skipped", report.harness_id);
             }
             SyncAction::Drift { .. } => {
-                if force {
-                    let spec = harness::all()
-                        .iter()
-                        .find(|s| s.id == report.harness_id)
-                        .unwrap();
-                    if let Some(adapter) = sync::adapter_for(spec) {
-                        match adapter.write_config(master, plat) {
-                            Ok(()) => {
-                                state.last_hashes.insert(
-                                    report.harness_id.to_string(),
-                                    sync::hash_config(master),
-                                );
-                                println!("🔄 {} — drift overwritten (--force)", report.harness_id);
-                            }
-                            Err(e) => {
-                                println!("❌ {} — error: {}", report.harness_id, e);
-                            }
-                        }
-                    }
+                drift_detected = true;
+                if dry_run {
+                    println!(
+                        "🔀 {} — would be left drifted (use --force to overwrite)",
+                        report.harness_id
+                    );
                 } else {
-                    drift_detected = true;
                     println!(
                         "🔀 {} — DRIFT DETECTED (use --force to overwrite, or resolve manually)",
                         report.harness_id
@@ -107,18 +113,41 @@ fn run_sync_pass(
 
     // ── Skills sync ───────────────────────────────────────────────────
     if !no_skills {
-        let skill_reports = skills::sync_skills_all(master_skills_dir, state, plat, force);
+        let skill_reports = skills::sync_skills_all(master_skills_dir, state, plat, force, dry_run);
         for report in &skill_reports {
             match &report.action {
-                SkillsSyncAction::Updated { installed } if installed.is_empty() => {
+                SkillsSyncAction::Updated { installed, forced } if installed.is_empty() => {
                     println!("⏭️  {} skills — already up to date", report.harness_id);
                 }
-                SkillsSyncAction::Updated { installed } => {
-                    println!(
-                        "✅ {} skills — synced: {}",
-                        report.harness_id,
-                        installed.join(", ")
-                    );
+                SkillsSyncAction::Updated { installed, forced: false } => {
+                    if dry_run {
+                        println!(
+                            "📝 {} skills — would sync: {}",
+                            report.harness_id,
+                            installed.join(", ")
+                        );
+                    } else {
+                        println!(
+                            "✅ {} skills — synced: {}",
+                            report.harness_id,
+                            installed.join(", ")
+                        );
+                    }
+                }
+                SkillsSyncAction::Updated { installed, forced: true } => {
+                    if dry_run {
+                        println!(
+                            "🔄 {} skills — would overwrite: {}",
+                            report.harness_id,
+                            installed.join(", ")
+                        );
+                    } else {
+                        println!(
+                            "🔄 {} skills — drift overwritten (--force): {}",
+                            report.harness_id,
+                            installed.join(", ")
+                        );
+                    }
                 }
                 SkillsSyncAction::AlreadyInSync => {
                     println!("⏭️  {} skills — already up to date", report.harness_id);
@@ -134,11 +163,19 @@ fn run_sync_pass(
                 }
                 SkillsSyncAction::Drift { skills } => {
                     drift_detected = true;
-                    println!(
-                        "🔀 {} skills — DRIFT on: {} (use --force to overwrite)",
-                        report.harness_id,
-                        skills.join(", ")
-                    );
+                    if dry_run {
+                        println!(
+                            "🔀 {} skills — would be left drifted: {}",
+                            report.harness_id,
+                            skills.join(", ")
+                        );
+                    } else {
+                        println!(
+                            "🔀 {} skills — DRIFT on: {} (use --force to overwrite)",
+                            report.harness_id,
+                            skills.join(", ")
+                        );
+                    }
                 }
                 SkillsSyncAction::Error(msg) => {
                     println!("❌ {} skills — error: {}", report.harness_id, msg);
@@ -147,11 +184,39 @@ fn run_sync_pass(
         }
     }
 
-    state.save(home).ok();
+    if !dry_run {
+        state.save(home).ok();
+    }
 
-    if drift_detected {
+    if drift_detected && !dry_run {
         println!();
         println!("💡 Run 'bridle status' to see diffs, or 'bridle sync --force' to overwrite.");
+    }
+}
+
+/// Print the MCP servers that would be added/removed/modified in a dry run.
+fn print_mcp_dry_run_details(master: &McpConfig, harness_id: &str, plat: platform::Platform) {
+    let spec = match harness::all().iter().find(|s| s.id == harness_id) {
+        Some(s) => s,
+        None => return,
+    };
+    let adapter = match sync::adapter_for(spec) {
+        Some(a) => a,
+        None => return,
+    };
+    let effective_master = adapter.effective_config(master, plat);
+    let harness_cfg = adapter.read_config(plat).unwrap_or_else(|_| McpConfig::new());
+    let diff = effective_master.diff_against(&harness_cfg);
+
+    for name in &diff.added {
+        println!("   + {} (would add)", name);
+    }
+    for name in &diff.removed {
+        println!("   - {} (would remove)", name);
+    }
+    for (name, server_diff) in &diff.modified {
+        let fields = server_diff.changed_fields().join(", ");
+        println!("   ~ {} (would modify: {})", name, fields);
     }
 }
 
@@ -162,6 +227,7 @@ fn run_watch(
     master_skills_dir: PathBuf,
     force: bool,
     no_skills: bool,
+    dry_run: bool,
 ) {
     profile::start_watching(&home).ok();
     let _guard = WatchGuard(home.clone());
@@ -182,6 +248,7 @@ fn run_watch(
         plat,
         force,
         no_skills,
+        dry_run,
     );
     println!();
 
@@ -224,6 +291,7 @@ fn run_watch(
             plat,
             force,
             no_skills,
+            dry_run,
         );
         println!();
     }

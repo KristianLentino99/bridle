@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::Output;
 
-use bridle::harness::{HarnessSpec, CURSOR, PI};
+use bridle::harness::{HarnessSpec, CLAUDE_DESKTOP, CURSOR, PI};
 use bridle::platform::{self, Platform};
 
 /// Integration tests for the `bridle` CLI.
@@ -234,6 +234,44 @@ fn sync_updates_installed_harness() {
 
     let cursor_config = std::fs::read_to_string(cursor_base.join("mcp.json")).unwrap();
     assert!(cursor_config.contains("posthog"));
+}
+
+#[test]
+fn sync_to_claude_desktop_skips_url_only_servers() {
+    let t = CliTest::new();
+    t.run_ok(&["init"]);
+    t.run_ok(&["add", "posthog", "--url", "https://mcp.posthog.com/mcp"]);
+    t.run_ok(&[
+        "add",
+        "plane",
+        "--command",
+        "npx",
+        "--args",
+        "plane-mcp-server",
+        "--args",
+        "stdio",
+    ]);
+
+    // Fake a Claude Desktop install with no existing MCP config.
+    let claude_base = t.harness_base(&CLAUDE_DESKTOP);
+    std::fs::create_dir_all(&claude_base).unwrap();
+
+    let output = t.run_ok(&["sync"]);
+    let stdout = t.stdout(&output);
+    assert!(
+        stdout.contains("claude-desktop — synced"),
+        "stdout: {stdout}"
+    );
+
+    let claude_config =
+        std::fs::read_to_string(claude_base.join("claude_desktop_config.json")).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&claude_config).unwrap();
+    let servers = value["mcpServers"].as_object().unwrap();
+    assert!(servers.contains_key("plane"), "command server should sync");
+    assert!(
+        !servers.contains_key("posthog"),
+        "URL-only server should not sync to Claude Desktop"
+    );
 }
 
 #[test]
@@ -593,4 +631,112 @@ fn profile_switch_warns_when_watch_marker_present() {
     let list_output = t.run_ok(&["profile", "list"]);
     let stdout = t.stdout(&list_output);
     assert!(stdout.contains("default *"), "stdout: {stdout}");
+}
+
+#[test]
+fn sync_dry_run_does_not_write_files() {
+    let t = CliTest::new();
+    t.run_ok(&["init"]);
+    t.run_ok(&["add", "posthog", "--url", "https://mcp.posthog.com/mcp"]);
+
+    // Fake a Cursor install with no existing MCP config.
+    let cursor_base = t.harness_base(&CURSOR);
+    std::fs::create_dir_all(&cursor_base).unwrap();
+
+    let state_before = std::fs::read_to_string(t.bridle_home.join("config.json")).unwrap();
+
+    let output = t.run_ok(&["sync", "--dry-run"]);
+    let stdout = t.stdout(&output);
+
+    assert!(stdout.contains("Dry run"), "stdout: {stdout}");
+    assert!(stdout.contains("cursor — would sync"), "stdout: {stdout}");
+    assert!(stdout.contains("+ posthog (would add)"), "stdout: {stdout}");
+
+    // No harness config should have been written.
+    assert!(!cursor_base.join("mcp.json").exists());
+
+    // State file should be unchanged.
+    let state_after = std::fs::read_to_string(t.bridle_home.join("config.json")).unwrap();
+    assert_eq!(state_before, state_after);
+}
+
+#[test]
+fn sync_dry_run_detects_drift() {
+    let t = CliTest::new();
+    t.run_ok(&["init"]);
+    t.run_ok(&["add", "posthog", "--url", "https://mcp.posthog.com/mcp"]);
+
+    t.write_cursor_config(r#"{"mcpServers":{"other":{"command":"npx"}}}"#);
+    t.run_ok(&["sync"]); // establish baseline hash
+    t.write_cursor_config(r#"{"mcpServers":{"modified":{"command":"uvx"}}}"#);
+
+    let output = t.run_ok(&["sync", "--dry-run"]);
+    let stdout = t.stdout(&output);
+
+    assert!(
+        stdout.contains("cursor — would be left drifted"),
+        "stdout: {stdout}"
+    );
+}
+
+#[test]
+fn sync_dry_run_force_reports_overwrite() {
+    let t = CliTest::new();
+    t.run_ok(&["init"]);
+    t.run_ok(&["add", "posthog", "--url", "https://mcp.posthog.com/mcp"]);
+
+    t.write_cursor_config(r#"{"mcpServers":{"other":{"command":"npx"}}}"#);
+    t.run_ok(&["sync"]); // establish baseline hash
+    t.write_cursor_config(r#"{"mcpServers":{"modified":{"command":"uvx"}}}"#);
+
+    let output = t.run_ok(&["sync", "--dry-run", "--force"]);
+    let stdout = t.stdout(&output);
+
+    assert!(
+        stdout.contains("cursor — would overwrite drift"),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("- modified (would remove)"), "stdout: {stdout}");
+    assert!(stdout.contains("+ posthog (would add)"), "stdout: {stdout}");
+
+    // Verify no actual write happened.
+    let cursor_config = std::fs::read_to_string(t.harness_base(&CURSOR).join("mcp.json")).unwrap();
+    assert!(cursor_config.contains("modified"));
+    assert!(!cursor_config.contains("posthog"));
+}
+
+#[test]
+fn sync_dry_run_skills_no_write() {
+    let t = CliTest::new();
+    t.run_ok(&["init"]);
+
+    let skill_dir = t.skills_dir().join("caveman");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(skill_dir.join("SKILL.md"), "# caveman").unwrap();
+
+    // Fake a Pi install (Pi supports skills).
+    t.write_pi_config(r#"{"imports":[],"mcpServers":{}}"#);
+
+    let output = t.run_ok(&["sync", "--dry-run"]);
+    let stdout = t.stdout(&output);
+
+    assert!(
+        stdout.contains("pi skills — would sync: caveman"),
+        "stdout: {stdout}"
+    );
+
+    // No skill should be installed.
+    assert!(!t.harness_base(&PI).join("skills").join("caveman").exists());
+}
+
+#[test]
+fn status_accepts_dry_run_flag() {
+    let t = CliTest::new();
+    t.run_ok(&["init"]);
+    t.run_ok(&["add", "posthog", "--url", "https://mcp.posthog.com/mcp"]);
+
+    let output = t.run_ok(&["status", "--dry-run"]);
+    let stdout = t.stdout(&output);
+
+    assert!(stdout.contains("Dry run"), "stdout: {stdout}");
 }

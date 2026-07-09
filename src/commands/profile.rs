@@ -98,7 +98,7 @@ fn cmd_switch(home: &std::path::Path, name: &str, no_sync: bool) {
 
     if !no_sync {
         if confirm("Sync now? [Y/n] ") {
-            crate::commands::sync::run(false, false, false);
+            crate::commands::sync::run(false, false, false, false);
         } else {
             println!("   Run 'bridle sync' when ready.");
         }

@@ -56,6 +56,12 @@ pub trait Adapter {
 
     /// The harness this adapter is for.
     fn harness_id(&self) -> &'static str;
+
+    /// Return the config that will actually be persisted after any harness-
+    /// specific filtering or transformation. Used for drift hashing.
+    fn effective_config(&self, config: &McpConfig, _platform: Platform) -> McpConfig {
+        config.clone()
+    }
 }
 
 // ── JSON adapter (used by Cursor, VS Code, Claude Code) ─────────────
@@ -90,6 +96,67 @@ impl Adapter for JsonAdapter {
         let json = serde_json::to_string_pretty(config)?;
         std::fs::write(&path, json)?;
         Ok(())
+    }
+}
+
+// ── Claude Desktop adapter (JSON, stdio-only) ───────────────────────
+
+pub struct ClaudeDesktopAdapter {
+    spec: &'static HarnessSpec,
+}
+
+impl ClaudeDesktopAdapter {
+    pub fn new(spec: &'static HarnessSpec) -> Self {
+        Self { spec }
+    }
+
+    /// Claude Desktop only supports stdio-based MCP servers. URL-based servers
+    /// cause the app to reject (and sometimes rewrite) the entire config file.
+    fn filter_for_desktop(config: &McpConfig) -> (McpConfig, Vec<String>) {
+        let mut filtered = McpConfig::new();
+        let mut skipped = Vec::new();
+        for (name, server) in &config.mcp_servers {
+            if server.command.is_some() {
+                filtered.add_server(name, server.clone());
+            } else {
+                skipped.push(name.clone());
+            }
+        }
+        (filtered, skipped)
+    }
+}
+
+impl Adapter for ClaudeDesktopAdapter {
+    fn harness_id(&self) -> &'static str {
+        "claude-desktop"
+    }
+
+    fn read_config(&self, platform: Platform) -> Result<McpConfig, AdapterError> {
+        let path = self.spec.mcp_config_path(platform);
+        let raw = std::fs::read_to_string(&path)?;
+        let config: McpConfig = serde_json::from_str(&raw)?;
+        Ok(config)
+    }
+
+    fn write_config(&self, config: &McpConfig, platform: Platform) -> Result<(), AdapterError> {
+        let path = self.spec.mcp_config_path(platform);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let (filtered, skipped) = Self::filter_for_desktop(config);
+        if !skipped.is_empty() {
+            eprintln!(
+                "⚠️  Claude Desktop does not support URL-based MCP servers; skipping: {}",
+                skipped.join(", ")
+            );
+        }
+        let json = serde_json::to_string_pretty(&filtered)?;
+        std::fs::write(&path, json)?;
+        Ok(())
+    }
+
+    fn effective_config(&self, config: &McpConfig, _platform: Platform) -> McpConfig {
+        Self::filter_for_desktop(config).0
     }
 }
 
@@ -388,6 +455,80 @@ mod tests {
     }
 
     #[test]
+    fn claude_desktop_adapter_filters_url_only_servers() {
+        let tmp = TempDir::new().unwrap();
+        let claude_dir = tmp.path().join("Claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        let config_json = claude_dir.join("claude_desktop_config.json");
+
+        let mut config = McpConfig::new();
+        config.add_server(
+            "posthog",
+            McpServer {
+                url: Some("https://mcp.posthog.com/mcp".into()),
+                command: None,
+                args: None,
+                env: None,
+                headers: None,
+            },
+        );
+        config.add_server(
+            "plane",
+            McpServer {
+                command: Some("npx".into()),
+                args: Some(vec!["plane-mcp-server".into(), "stdio".into()]),
+                env: Some(BTreeMap::from([("PLANE_API_KEY".into(), "secret".into())])),
+                url: None,
+                headers: None,
+            },
+        );
+
+        let spec = harness_spec_at(&claude_dir, McpFormat::Json, "claude_desktop_config.json");
+        let adapter = ClaudeDesktopAdapter::new(spec);
+        adapter.write_config(&config, Platform::MacOS).unwrap();
+
+        let raw = std::fs::read_to_string(&config_json).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let servers = value["mcpServers"].as_object().unwrap();
+        assert!(
+            !servers.contains_key("posthog"),
+            "URL-only server should be filtered out"
+        );
+        assert!(
+            servers.contains_key("plane"),
+            "command server should be kept"
+        );
+    }
+
+    #[test]
+    fn claude_desktop_adapter_writes_empty_config_when_only_url_servers() {
+        let tmp = TempDir::new().unwrap();
+        let claude_dir = tmp.path().join("Claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        let config_json = claude_dir.join("claude_desktop_config.json");
+
+        let mut config = McpConfig::new();
+        config.add_server(
+            "posthog",
+            McpServer {
+                url: Some("https://mcp.posthog.com/mcp".into()),
+                command: None,
+                args: None,
+                env: None,
+                headers: None,
+            },
+        );
+
+        let spec = harness_spec_at(&claude_dir, McpFormat::Json, "claude_desktop_config.json");
+        let adapter = ClaudeDesktopAdapter::new(spec);
+        adapter.write_config(&config, Platform::MacOS).unwrap();
+
+        let raw = std::fs::read_to_string(&config_json).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert!(value["mcpServers"].as_object().unwrap().is_empty());
+    }
+
+    #[test]
     fn pi_adapter_roundtrip_preserves_imports() {
         let tmp = TempDir::new().unwrap();
         let agent_dir = tmp.path().join(".pi").join("agent");
@@ -407,7 +548,7 @@ mod tests {
         std::fs::write(&mcp_json, initial).unwrap();
 
         // Create a custom spec that points to our temp dir
-        let spec = harness_spec_at(&agent_dir, McpFormat::JsonWithImports);
+        let spec = harness_spec_at(&agent_dir, McpFormat::JsonWithImports, "mcp.json");
         let adapter = PiAdapter::new(spec);
 
         // Read
@@ -452,7 +593,7 @@ mod tests {
 }"#;
         std::fs::write(&mcp_json, initial).unwrap();
 
-        let spec = harness_spec_at(&cursor_dir, McpFormat::Json);
+        let spec = harness_spec_at(&cursor_dir, McpFormat::Json, "mcp.json");
         let adapter = JsonAdapter::new(spec);
 
         let config = adapter.read_config(Platform::MacOS).unwrap();
@@ -499,7 +640,7 @@ PLANE_API_KEY = "plane_api_test"
 "#;
         std::fs::write(&config_toml, initial).unwrap();
 
-        let spec = harness_spec_at(&agent_dir, McpFormat::Toml);
+        let spec = harness_spec_at(&agent_dir, McpFormat::Toml, "config.toml");
         let adapter = TomlAdapter::new(spec);
 
         let config = adapter.read_config(Platform::MacOS).unwrap();
@@ -577,12 +718,12 @@ PLANE_API_KEY = "plane_api_test"
     }
 
     // Helper: create a &'static HarnessSpec pointing at a temp directory
-    fn harness_spec_at(base: &std::path::Path, format: McpFormat) -> &'static HarnessSpec {
+    fn harness_spec_at(
+        base: &std::path::Path,
+        format: McpFormat,
+        config_file: &'static str,
+    ) -> &'static HarnessSpec {
         let path_str = Box::leak(base.to_string_lossy().to_string().into_boxed_str());
-        let config_file = match format {
-            McpFormat::Toml => "config.toml",
-            _ => "mcp.json",
-        };
         Box::leak(Box::new(HarnessSpec {
             id: "test",
             name: "Test",
