@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::adapters::{
-    Adapter, ClaudeDesktopAdapter, JsonAdapter, KimiAdapter, PiAdapter, TomlAdapter,
+    Adapter, ClaudeCodeAdapter, ClaudeDesktopAdapter, JsonAdapter, KimiAdapter, PiAdapter,
+    TomlAdapter,
 };
 use crate::harness::{HarnessSpec, McpFormat};
 use crate::mcp_config::McpConfig;
@@ -86,6 +87,7 @@ pub fn adapter_for(spec: &'static HarnessSpec) -> Option<Box<dyn Adapter>> {
     match spec.id {
         "kimi" => Some(Box::new(KimiAdapter::new(spec))),
         "claude-desktop" => Some(Box::new(ClaudeDesktopAdapter::new(spec))),
+        "claude-code" => Some(Box::new(ClaudeCodeAdapter::new(spec))),
         _ => match spec.mcp_format {
             McpFormat::Json => Some(Box::new(JsonAdapter::new(spec))),
             McpFormat::JsonWithImports => Some(Box::new(PiAdapter::new(spec))),

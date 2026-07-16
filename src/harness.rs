@@ -13,8 +13,13 @@ pub struct HarnessSpec {
     pub macos_base: &'static str,
     pub linux_base: &'static str,
     pub windows_base: &'static str,
-    /// MCP config filename relative to base_dir.
+    /// MCP config filename relative to base_dir, unless `mcp_config_absolute`
+    /// is set (in which case that absolute path under HOME is used directly).
     pub mcp_config_file: &'static str,
+    /// Optional absolute path under HOME for the MCP config file.
+    /// When set, `mcp_config_path` returns this path joined to HOME
+    /// instead of base_dir.join(mcp_config_file).
+    pub mcp_config_absolute: Option<&'static str>,
     /// Skills directory relative to base_dir, if any.
     pub skills_dir: Option<&'static str>,
     /// Agents directory relative to base_dir, if any.
@@ -56,6 +61,10 @@ impl HarnessSpec {
 
     /// Full path to the MCP config file.
     pub fn mcp_config_path(&self, platform: Platform) -> PathBuf {
+        if let Some(absolute) = self.mcp_config_absolute {
+            let home = crate::platform::home_dir();
+            return join_home_relative(&home, absolute.strip_prefix("~/").unwrap_or(absolute));
+        }
         self.base_dir(platform).join(self.mcp_config_file)
     }
 }
@@ -81,6 +90,7 @@ pub const PI: HarnessSpec = HarnessSpec {
     linux_base: "~/.pi/agent",
     windows_base: r"~\AppData\Roaming\pi\agent", // approximate, adjust after checking
     mcp_config_file: "mcp.json",
+    mcp_config_absolute: None,
     skills_dir: Some("skills"),
     agents_dir: None,
     detection_marker: "mcp.json",
@@ -94,6 +104,7 @@ pub const CLAUDE_DESKTOP: HarnessSpec = HarnessSpec {
     linux_base: "~/.config/Claude",
     windows_base: r"~\AppData\Roaming\Claude",
     mcp_config_file: "claude_desktop_config.json",
+    mcp_config_absolute: None,
     skills_dir: None,
     agents_dir: None,
     detection_marker: "claude_desktop_config.json",
@@ -107,9 +118,10 @@ pub const CLAUDE_CODE: HarnessSpec = HarnessSpec {
     linux_base: "~/.claude",
     windows_base: r"~\.claude",
     mcp_config_file: "mcp_servers.json",
-    skills_dir: None,
+    mcp_config_absolute: Some("~/.claude.json"),
+    skills_dir: Some("skills"),
     agents_dir: None,
-    detection_marker: "mcp_servers.json",
+    detection_marker: ".claude.json",
 };
 
 pub const CURSOR: HarnessSpec = HarnessSpec {
@@ -120,6 +132,7 @@ pub const CURSOR: HarnessSpec = HarnessSpec {
     linux_base: "~/.cursor",
     windows_base: r"~\.cursor",
     mcp_config_file: "mcp.json",
+    mcp_config_absolute: None,
     skills_dir: None,
     agents_dir: None,
     detection_marker: "mcp.json",
@@ -133,6 +146,7 @@ pub const VSCODE: HarnessSpec = HarnessSpec {
     linux_base: "~/.config/Code/User",
     windows_base: r"~\AppData\Roaming\Code\User",
     mcp_config_file: "mcp.json",
+    mcp_config_absolute: None,
     skills_dir: None,
     agents_dir: None,
     detection_marker: "mcp.json",
@@ -146,6 +160,7 @@ pub const CODEX: HarnessSpec = HarnessSpec {
     linux_base: "~/.codex",
     windows_base: r"~\.codex",
     mcp_config_file: "config.toml",
+    mcp_config_absolute: None,
     skills_dir: Some("skills"),
     agents_dir: Some("agents"),
     detection_marker: "config.toml",
@@ -159,6 +174,7 @@ pub const KIMI: HarnessSpec = HarnessSpec {
     linux_base: "~/.kimi-code",
     windows_base: r"~\.kimi-code",
     mcp_config_file: "mcp.json",
+    mcp_config_absolute: None,
     skills_dir: None,
     agents_dir: None,
     detection_marker: "config.toml",

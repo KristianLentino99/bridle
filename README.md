@@ -32,7 +32,7 @@ Before:                           After:
 |---------|-----------------|-------------|------------|-------|
 | Pi Coding Agent | `mcp.json` (JSON + imports) | ✅ | — | Preserves imports |
 | Claude Desktop | `claude_desktop_config.json` (JSON) | — | — | — |
-| Claude Code | `mcp_servers.json` (JSON) | — | — | — |
+| Claude Code | `mcp_servers.json` (JSON) | ✅ | — | — |
 | Cursor | `mcp.json` (JSON) | — | — | — |
 | VS Code | `mcp.json` (JSON) | — | — | — |
 | Codex CLI | `config.toml` (TOML) | ✅ | Planned | — |

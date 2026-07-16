@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::Output;
 
-use bridle::harness::{HarnessSpec, CLAUDE_DESKTOP, CURSOR, PI};
+use bridle::harness::{HarnessSpec, CLAUDE_CODE, CLAUDE_DESKTOP, CURSOR, PI};
 use bridle::platform::{self, Platform};
 
 /// Integration tests for the `bridle` CLI.
@@ -110,6 +110,11 @@ impl CliTest {
         let dir = self.harness_base(&PI);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("mcp.json"), contents).unwrap();
+    }
+
+    fn write_claude_code_config(&self, contents: &str) {
+        // Claude Code stores config in ~/.claude.json (a dotfile at HOME level).
+        std::fs::write(self.home.join(".claude.json"), contents).unwrap();
     }
 
     fn profile_dir(&self, name: &str) -> PathBuf {
@@ -742,4 +747,43 @@ fn status_accepts_dry_run_flag() {
     let stdout = t.stdout(&output);
 
     assert!(stdout.contains("Dry run"), "stdout: {stdout}");
+}
+
+#[test]
+fn claude_code_has_skills_dir_configured() {
+    // Claude Code supports ~/.claude/skills/ — verify the harness spec reflects this.
+    assert!(
+        CLAUDE_CODE.skills_dir.is_some(),
+        "CLAUDE_CODE must have skills_dir set to 'skills' so Bridle can sync skills to ~/.claude/skills/"
+    );
+}
+
+#[test]
+fn sync_skills_to_claude_code() {
+    let t = CliTest::new();
+    t.run_ok(&["init"]);
+
+    // Add a skill to the master skills dir.
+    let skill_dir = t.skills_dir().join("koomy-business-metrics");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(skill_dir.join("SKILL.md"), "# koomy-business-metrics").unwrap();
+
+    // Fake a Claude Code install: ~/.claude/ directory (for harness detection)
+    // and ~/.claude.json (the actual config file).
+    let claude_dir = t.harness_base(&CLAUDE_CODE);
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    t.write_claude_code_config(r#"{"mcpServers":{}}"#);
+
+    let output = t.run_ok(&["sync"]);
+    let stdout = t.stdout(&output);
+    assert!(
+        stdout.contains("claude-code skills — synced: koomy-business-metrics"),
+        "stdout: {stdout}"
+    );
+
+    assert!(claude_dir
+        .join("skills")
+        .join("koomy-business-metrics")
+        .join("SKILL.md")
+        .exists());
 }

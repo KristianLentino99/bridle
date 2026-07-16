@@ -351,6 +351,143 @@ impl Adapter for TomlAdapter {
     }
 }
 
+// ── Claude Code adapter (JSON dotfile at ~/.claude.json) ────────────
+
+/// Claude Code stores its full config (including MCP servers) in
+/// `~/.claude.json`, not `~/.claude/mcp_servers.json`. This adapter
+/// reads/writes only the `mcpServers` key and preserves all other
+/// top-level keys (model, personality, etc.).
+///
+/// The path is resolved via `HarnessSpec::mcp_config_absolute` which
+/// points to `~/.claude.json` directly rather than a file inside the
+/// `~/.claude/` directory.
+pub struct ClaudeCodeAdapter {
+    spec: &'static HarnessSpec,
+    /// Override home directory for testing.
+    test_home: Option<PathBuf>,
+}
+
+impl ClaudeCodeAdapter {
+    pub fn new(spec: &'static HarnessSpec) -> Self {
+        Self {
+            spec,
+            test_home: None,
+        }
+    }
+
+    /// Create an adapter pointing at a specific home directory (for tests).
+    #[cfg(test)]
+    fn new_with_home(home: PathBuf) -> Self {
+        Self {
+            spec: &crate::harness::CLAUDE_CODE,
+            test_home: Some(home),
+        }
+    }
+
+    fn config_path(&self) -> PathBuf {
+        if let Some(ref h) = self.test_home {
+            h.join(".claude.json")
+        } else {
+            // Uses mcp_config_absolute from the harness spec
+            self.spec.mcp_config_path(crate::platform::Platform::MacOS)
+        }
+    }
+
+    /// Read config from a specific path (for tests).
+    #[cfg(test)]
+    fn read_config_at_path(&self, path: &PathBuf) -> Result<McpConfig, AdapterError> {
+        let raw = std::fs::read_to_string(path)?;
+        let value: serde_json::Value = serde_json::from_str(&raw)?;
+        let servers = value
+            .get("mcpServers")
+            .cloned()
+            .unwrap_or(serde_json::Value::Object(Default::default()));
+        // Wrap back into McpConfig shape: { "mcpServers": ... }
+        let wrapped = serde_json::json!({ "mcpServers": servers });
+        let config: McpConfig = serde_json::from_value(wrapped)?;
+        Ok(config)
+    }
+
+    /// Write config to a specific path (for tests).
+    #[cfg(test)]
+    fn write_config_at_path(&self, config: &McpConfig, path: &PathBuf) -> Result<(), AdapterError> {
+        let mut root: serde_json::Value = if path.exists() {
+            let raw = std::fs::read_to_string(path)?;
+            serde_json::from_str(&raw).unwrap_or(serde_json::Value::Object(Default::default()))
+        } else {
+            serde_json::Value::Object(Default::default())
+        };
+
+        let servers_value = serde_json::to_value(config)?;
+        if let serde_json::Value::Object(ref mut root_obj) = root {
+            if let serde_json::Value::Object(ref servers_obj) = servers_value {
+                if let Some(mcp_value) = servers_obj.get("mcpServers") {
+                    root_obj.insert("mcpServers".to_string(), mcp_value.clone());
+                }
+            }
+        }
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let json = serde_json::to_string_pretty(&root)?;
+        std::fs::write(path, json)?;
+        Ok(())
+    }
+}
+
+impl Adapter for ClaudeCodeAdapter {
+    fn harness_id(&self) -> &'static str {
+        "claude-code"
+    }
+
+    fn read_config(&self, _platform: Platform) -> Result<McpConfig, AdapterError> {
+        let path = self.config_path();
+        if !path.exists() {
+            return Ok(McpConfig::new());
+        }
+        let raw = std::fs::read_to_string(&path)?;
+        let value: serde_json::Value = serde_json::from_str(&raw)?;
+        let servers = value
+            .get("mcpServers")
+            .cloned()
+            .unwrap_or(serde_json::Value::Object(Default::default()));
+        // Wrap back into McpConfig shape: { "mcpServers": ... }
+        let wrapped = serde_json::json!({ "mcpServers": servers });
+        let config: McpConfig = serde_json::from_value(wrapped)?;
+        Ok(config)
+    }
+
+    fn write_config(&self, config: &McpConfig, _platform: Platform) -> Result<(), AdapterError> {
+        let path = self.config_path();
+
+        // Read existing file to preserve non-MCP fields
+        let mut root: serde_json::Value = if path.exists() {
+            let raw = std::fs::read_to_string(&path)?;
+            serde_json::from_str(&raw).unwrap_or(serde_json::Value::Object(Default::default()))
+        } else {
+            serde_json::Value::Object(Default::default())
+        };
+
+        // Replace only mcpServers
+        let servers_value = serde_json::to_value(config)?;
+        if let serde_json::Value::Object(ref mut root_obj) = root {
+            if let serde_json::Value::Object(ref servers_obj) = servers_value {
+                if let Some(mcp_value) = servers_obj.get("mcpServers") {
+                    root_obj.insert("mcpServers".to_string(), mcp_value.clone());
+                }
+            }
+        }
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let json = serde_json::to_string_pretty(&root)?;
+        std::fs::write(&path, json)?;
+        Ok(())
+    }
+}
+
 // ── Kimi Symlink Adapter ────────────────────────────────────────────
 
 /// Kimi Code reads MCP config via `--mcp-config-file`. This adapter creates
@@ -697,6 +834,7 @@ PLANE_API_KEY = "plane_api_test"
             linux_base: path_str,
             windows_base: path_str,
             mcp_config_file: "mcp.json",
+            mcp_config_absolute: None,
             skills_dir: None,
             agents_dir: None,
             detection_marker: "config.toml",
@@ -717,6 +855,115 @@ PLANE_API_KEY = "plane_api_test"
         assert!(config.server_names().contains(&"kimi-test"));
     }
 
+    // ── Claude Code adapter tests ──────────────────────────────────
+
+    #[test]
+    fn claude_code_adapter_reads_dotfile_json() {
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().to_path_buf();
+        let claude_json = home.join(".claude.json");
+
+        let initial = r#"{
+  "model": "claude-sonnet-4-20250514",
+  "personality": "pragmatic",
+  "mcpServers": {
+    "postgres": {
+      "command": "postgres-mcp",
+      "args": ["--access-mode=restricted"],
+      "env": {
+        "DATABASE_URI": "postgresql://localhost/test"
+      }
+    }
+  }
+}"#;
+        std::fs::write(&claude_json, initial).unwrap();
+
+        let adapter = ClaudeCodeAdapter::new_with_home(home.clone());
+        let config = adapter.read_config_at_path(&claude_json).unwrap();
+        assert!(config.server_names().contains(&"postgres"));
+    }
+
+    #[test]
+    fn claude_code_adapter_preserves_non_mcp_fields_on_write() {
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().to_path_buf();
+        let claude_json = home.join(".claude.json");
+
+        let initial = r#"{
+  "model": "claude-sonnet-4-20250514",
+  "personality": "pragmatic",
+  "mcpServers": {
+    "postgres": {
+      "command": "postgres-mcp",
+      "args": ["--access-mode=restricted"]
+    }
+  }
+}"#;
+        std::fs::write(&claude_json, initial).unwrap();
+
+        let adapter = ClaudeCodeAdapter::new_with_home(home.clone());
+
+        let mut config = McpConfig::new();
+        config.add_server(
+            "stripe",
+            McpServer {
+                command: Some("npx".into()),
+                args: Some(vec!["-y".into(), "@stripe/mcp".into()]),
+                url: None,
+                env: None,
+                headers: None,
+            },
+        );
+
+        adapter.write_config_at_path(&config, &claude_json).unwrap();
+
+        let raw = std::fs::read_to_string(&claude_json).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+
+        // Non-MCP fields preserved
+        assert_eq!(value["model"], "claude-sonnet-4-20250514");
+        assert_eq!(value["personality"], "pragmatic");
+
+        // New server added
+        let servers = value["mcpServers"].as_object().unwrap();
+        assert!(servers.contains_key("stripe"));
+        // Old server replaced (master overwrites)
+        assert!(
+            !servers.contains_key("postgres"),
+            "postgres should be replaced by master"
+        );
+    }
+
+    #[test]
+    fn claude_code_adapter_writes_new_file_when_none_exists() {
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().to_path_buf();
+        let claude_json = home.join(".claude.json");
+
+        let adapter = ClaudeCodeAdapter::new_with_home(home);
+
+        let mut config = McpConfig::new();
+        config.add_server(
+            "deepwiki",
+            McpServer {
+                url: Some("https://mcp.deepwiki.com/mcp".into()),
+                command: None,
+                args: None,
+                env: None,
+                headers: None,
+            },
+        );
+
+        adapter.write_config_at_path(&config, &claude_json).unwrap();
+
+        let raw = std::fs::read_to_string(&claude_json).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(
+            value["mcpServers"]["deepwiki"]["url"],
+            "https://mcp.deepwiki.com/mcp"
+        );
+    }
+
     // Helper: create a &'static HarnessSpec pointing at a temp directory
     fn harness_spec_at(
         base: &std::path::Path,
@@ -732,6 +979,7 @@ PLANE_API_KEY = "plane_api_test"
             linux_base: path_str,
             windows_base: path_str,
             mcp_config_file: config_file,
+            mcp_config_absolute: None,
             skills_dir: None,
             agents_dir: None,
             detection_marker: config_file,
