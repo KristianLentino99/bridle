@@ -175,7 +175,7 @@ pub const KIMI: HarnessSpec = HarnessSpec {
     windows_base: r"~\.kimi-code",
     mcp_config_file: "mcp.json",
     mcp_config_absolute: None,
-    skills_dir: None,
+    skills_dir: Some("skills"),
     agents_dir: None,
     detection_marker: "config.toml",
 };
@@ -211,5 +211,12 @@ mod tests {
     fn codex_has_skills_and_agents() {
         assert!(CODEX.skills_dir.is_some());
         assert!(CODEX.agents_dir.is_some());
+    }
+
+    #[test]
+    fn kimi_has_skills_dir() {
+        // Kimi Code loads user-level skills from ~/.kimi-code/skills/
+        // (directory form with SKILL.md), same layout as other harnesses.
+        assert_eq!(KIMI.skills_dir, Some("skills"));
     }
 }
