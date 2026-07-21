@@ -9,6 +9,7 @@ use crate::platform::Platform;
 use crate::sync::SyncState;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::fmt;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -383,6 +384,49 @@ pub struct SkillsImportReport {
     pub errors: Vec<(String, String)>,
 }
 
+/// Priority of a skill source directory. Used to resolve collisions when
+/// the same skill name appears in multiple source locations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SkillSourcePriority {
+    Default = 0,
+    User = 1,
+    Project = 2,
+}
+
+impl fmt::Display for SkillSourcePriority {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SkillSourcePriority::Project => write!(f, "project"),
+            SkillSourcePriority::User => write!(f, "user"),
+            SkillSourcePriority::Default => write!(f, "default"),
+        }
+    }
+}
+
+/// A directory containing skills to import, with its priority level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillSource {
+    pub path: PathBuf,
+    pub priority: SkillSourcePriority,
+}
+
+/// Record of a collision encountered during multi-source import.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillCollision {
+    pub name: String,
+    pub chosen: SkillSource,
+    pub skipped: Vec<SkillSource>,
+}
+
+/// Full report from a multi-source skills import.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MultiSourceImportReport {
+    pub imported: Vec<String>,
+    pub skipped: Vec<String>,
+    pub collisions: Vec<SkillCollision>,
+    pub errors: Vec<(String, String)>,
+}
+
 /// Import skills from a source directory into the canonical bridle skills directory.
 ///
 /// By default, skills are copied (not symlinked) so `~/Bridle/skills/` becomes the
@@ -518,6 +562,158 @@ fn create_symlink(src: &Path, dst: &Path) -> io::Result<()> {
             io::ErrorKind::Unsupported,
             "symlinks are not supported on this platform",
         ))
+    }
+}
+
+// ── Multi-source skills import ────────────────────────────────────────
+
+/// Discover all available skill source directories.
+///
+/// Sources are discovered in this order:
+/// 1. Project `.agents/skills` — walking up from cwd (priority: Project)
+/// 2. User harness skill directories that exist (priority: User)
+/// 3. `~/.agents/skills` (priority: Default)
+pub fn discover_skill_sources(platform: Platform, cwd: &Path) -> Vec<SkillSource> {
+    let mut sources: Vec<SkillSource> = vec![];
+
+    // 1. Project `.agents/skills/` — walk up from cwd
+    let mut current = Some(cwd.to_path_buf());
+    while let Some(dir) = current {
+        let agents_skills = dir.join(".agents").join("skills");
+        if agents_skills.is_dir() {
+            sources.push(SkillSource {
+                path: agents_skills,
+                priority: SkillSourcePriority::Project,
+            });
+            break; // only the closest project wins
+        }
+        current = dir.parent().map(Path::to_path_buf);
+    }
+
+    // 2. User harness skill directories
+    for spec in crate::harness::all() {
+        if spec.skills_dir.is_none() {
+            continue;
+        }
+        let base = spec.base_dir(platform);
+        let skills = base.join(spec.skills_dir.unwrap());
+        if skills.is_dir() {
+            // Skip if already covered by project source
+            if sources.iter().any(|s| s.path == skills) {
+                continue;
+            }
+            sources.push(SkillSource {
+                path: skills,
+                priority: SkillSourcePriority::User,
+            });
+        }
+    }
+
+    // 3. `~/.agents/skills/` (default legacy location)
+    let default_skills = crate::platform::home_dir().join(".agents").join("skills");
+    if default_skills.is_dir() {
+        // Skip if already covered
+        if !sources.iter().any(|s| s.path == default_skills) {
+            sources.push(SkillSource {
+                path: default_skills,
+                priority: SkillSourcePriority::Default,
+            });
+        }
+    }
+
+    sources
+}
+
+/// Import skills from multiple source directories, resolving collisions
+/// by source priority (project > user > default).
+///
+/// Same-named skills found in multiple sources are resolved automatically:
+/// the highest-priority source wins and lower-priority ones are reported
+/// as collisions.
+pub fn import_skills_from_sources(
+    sources: &[SkillSource],
+    target: &Path,
+    force: bool,
+    link: bool,
+    update: bool,
+) -> io::Result<MultiSourceImportReport> {
+    fs::create_dir_all(target)?;
+
+    let mut report = MultiSourceImportReport::default();
+
+    // Collect all skill names and their sources, sorted by priority.
+    // Key: skill name, Value: list of (source, priority) pairs.
+    let mut skill_map: BTreeMap<String, Vec<&SkillSource>> = BTreeMap::new();
+
+    for source in sources {
+        let names = list_skill_names(&source.path).unwrap_or_default();
+        for name in names {
+            skill_map.entry(name).or_default().push(source);
+        }
+    }
+
+    for (name, srcs) in &skill_map {
+        // Sort sources by descending priority so the winner is first.
+        let mut sorted: Vec<&SkillSource> = srcs.to_vec();
+        sorted.sort_by_key(|s| std::cmp::Reverse(s.priority));
+
+        let winner = sorted[0];
+        let skipped: Vec<SkillSource> = sorted[1..].iter().map(|s| (*s).clone()).collect();
+
+        if !skipped.is_empty() {
+            report.collisions.push(SkillCollision {
+                name: name.clone(),
+                chosen: winner.clone(),
+                skipped: skipped.clone(),
+            });
+        }
+
+        let source_skill = winner.path.join(name);
+        let source_skill = fs::canonicalize(&source_skill).unwrap_or_else(|_| source_skill.clone());
+        let target_skill = target.join(name);
+
+        let action = if target_skill.exists() || target_skill.is_symlink() {
+            determine_import_action(&source_skill, &target_skill, force, link, update)
+        } else {
+            ImportAction::Install
+        };
+
+        match action {
+            ImportAction::Skip => {
+                report.skipped.push(name.clone());
+            }
+            ImportAction::RemoveAndInstall => {
+                if let Err(e) = remove_skill_entry(&target_skill) {
+                    report.errors.push((name.clone(), e.to_string()));
+                    continue;
+                }
+                // fall through to Install
+                if let Err(e) = install_skill_from_source(&source_skill, &target_skill, link) {
+                    report.errors.push((name.clone(), e.to_string()));
+                } else {
+                    report.imported.push(name.clone());
+                }
+            }
+            ImportAction::Install => {
+                if let Err(e) = install_skill_from_source(&source_skill, &target_skill, link) {
+                    report.errors.push((name.clone(), e.to_string()));
+                } else {
+                    report.imported.push(name.clone());
+                }
+            }
+        }
+    }
+
+    Ok(report)
+}
+
+/// Install a skill from a source path into the target, creating a symlink
+/// or copy based on the `link` flag.
+fn install_skill_from_source(source: &Path, target: &Path, link: bool) -> io::Result<()> {
+    if link {
+        create_symlink(source, target)
+    } else {
+        copy_dir_all(source, target)
     }
 }
 
@@ -1302,5 +1498,211 @@ mod tests {
         let removed = remove_skill(&skills_dir, "caveman").unwrap();
         assert!(removed);
         assert!(!skills_dir.join("caveman").exists());
+    }
+
+    // ── Multi-source import tests ───────────────────────────────
+
+    #[test]
+    fn multi_source_import_no_collisions() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("Bridle").join("skills");
+
+        let source_a = tmp.path().join(".project").join(".agents").join("skills");
+        write_skill_file(&source_a, "only-in-a", "SKILL.md", "a");
+
+        let source_b = tmp.path().join(".pi").join("agent").join("skills");
+        write_skill_file(&source_b, "only-in-b", "SKILL.md", "b");
+
+        let sources = vec![
+            SkillSource {
+                path: source_a,
+                priority: SkillSourcePriority::Project,
+            },
+            SkillSource {
+                path: source_b,
+                priority: SkillSourcePriority::User,
+            },
+        ];
+
+        let report = import_skills_from_sources(&sources, &target, false, false, false).unwrap();
+
+        assert_eq!(report.imported, vec!["only-in-a", "only-in-b"]);
+        assert!(report.skipped.is_empty());
+        assert!(report.collisions.is_empty());
+        assert!(report.errors.is_empty());
+
+        assert!(target.join("only-in-a").is_dir());
+        assert!(target.join("only-in-b").is_dir());
+    }
+
+    #[test]
+    fn multi_source_project_wins_over_user_on_collision() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("Bridle").join("skills");
+
+        let project = tmp.path().join(".project").join(".agents").join("skills");
+        write_skill_file(&project, "shared", "SKILL.md", "project-version");
+
+        let user_pi = tmp.path().join(".pi").join("agent").join("skills");
+        write_skill_file(&user_pi, "shared", "SKILL.md", "user-version");
+
+        let sources = vec![
+            SkillSource {
+                path: project.clone(),
+                priority: SkillSourcePriority::Project,
+            },
+            SkillSource {
+                path: user_pi.clone(),
+                priority: SkillSourcePriority::User,
+            },
+        ];
+
+        let report = import_skills_from_sources(&sources, &target, false, false, false).unwrap();
+
+        assert_eq!(report.imported, vec!["shared"]);
+        assert_eq!(report.collisions.len(), 1);
+
+        let collision = &report.collisions[0];
+        assert_eq!(collision.name, "shared");
+        assert_eq!(collision.chosen.priority, SkillSourcePriority::Project);
+        assert_eq!(collision.skipped.len(), 1);
+        assert_eq!(collision.skipped[0].priority, SkillSourcePriority::User);
+
+        // Project version should be the one installed.
+        let content = fs::read_to_string(target.join("shared").join("SKILL.md")).unwrap();
+        assert_eq!(content, "project-version");
+    }
+
+    #[test]
+    fn multi_source_user_wins_over_default_on_collision() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("Bridle").join("skills");
+
+        let user_pi = tmp.path().join(".pi").join("agent").join("skills");
+        write_skill_file(&user_pi, "shared", "SKILL.md", "user-version");
+
+        let default_agents = tmp.path().join(".agents").join("skills");
+        write_skill_file(&default_agents, "shared", "SKILL.md", "default-version");
+
+        let sources = vec![
+            SkillSource {
+                path: user_pi.clone(),
+                priority: SkillSourcePriority::User,
+            },
+            SkillSource {
+                path: default_agents.clone(),
+                priority: SkillSourcePriority::Default,
+            },
+        ];
+
+        let report = import_skills_from_sources(&sources, &target, false, false, false).unwrap();
+
+        assert_eq!(report.imported, vec!["shared"]);
+        assert_eq!(report.collisions.len(), 1);
+
+        let collision = &report.collisions[0];
+        assert_eq!(collision.name, "shared");
+        assert_eq!(collision.chosen.priority, SkillSourcePriority::User);
+        assert_eq!(collision.skipped.len(), 1);
+        assert_eq!(collision.skipped[0].priority, SkillSourcePriority::Default);
+
+        let content = fs::read_to_string(target.join("shared").join("SKILL.md")).unwrap();
+        assert_eq!(content, "user-version");
+    }
+
+    #[test]
+    fn multi_source_single_source_does_not_produce_collisions() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("Bridle").join("skills");
+
+        let source = tmp.path().join(".agents").join("skills");
+        write_skill_file(&source, "alpha", "SKILL.md", "x");
+        write_skill_file(&source, "beta", "SKILL.md", "y");
+
+        let sources = vec![SkillSource {
+            path: source,
+            priority: SkillSourcePriority::User,
+        }];
+
+        let report = import_skills_from_sources(&sources, &target, false, false, false).unwrap();
+
+        assert_eq!(report.imported, vec!["alpha", "beta"]);
+        assert!(report.collisions.is_empty());
+        assert!(report.skipped.is_empty());
+    }
+
+    #[test]
+    fn multi_source_force_overwrites_target() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("Bridle").join("skills");
+
+        let project = tmp.path().join(".project").join(".agents").join("skills");
+        write_skill_file(&project, "caveman", "SKILL.md", "project");
+
+        let user_pi = tmp.path().join(".pi").join("agent").join("skills");
+        write_skill_file(&user_pi, "caveman", "SKILL.md", "user");
+
+        // Pre-populate target with a different version.
+        write_skill_file(&target, "caveman", "SKILL.md", "old");
+
+        let sources = vec![
+            SkillSource {
+                path: project.clone(),
+                priority: SkillSourcePriority::Project,
+            },
+            SkillSource {
+                path: user_pi.clone(),
+                priority: SkillSourcePriority::User,
+            },
+        ];
+
+        let report = import_skills_from_sources(&sources, &target, true, false, false).unwrap();
+
+        assert_eq!(report.imported, vec!["caveman"]);
+        let content = fs::read_to_string(target.join("caveman").join("SKILL.md")).unwrap();
+        assert_eq!(content, "project");
+    }
+
+    #[test]
+    fn multi_source_skips_unchanged_target() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("Bridle").join("skills");
+
+        let source = tmp.path().join(".agents").join("skills");
+        write_skill_file(&source, "caveman", "SKILL.md", "grunt");
+
+        // Pre-populate target with identical content.
+        copy_dir_all(&source.join("caveman"), &target.join("caveman")).unwrap();
+
+        let sources = vec![SkillSource {
+            path: source,
+            priority: SkillSourcePriority::User,
+        }];
+
+        let report = import_skills_from_sources(&sources, &target, false, false, false).unwrap();
+
+        assert!(report.imported.is_empty());
+        assert_eq!(report.skipped, vec!["caveman"]);
+    }
+
+    #[test]
+    fn discover_skill_sources_finds_project_source() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path().join("my-project");
+        let agents_skills = project.join(".agents").join("skills");
+        fs::create_dir_all(&agents_skills).unwrap();
+
+        let cwd = project.join("src").join("deep");
+        fs::create_dir_all(&cwd).unwrap();
+
+        let sources = discover_skill_sources(Platform::MacOS, &cwd);
+
+        let project_sources: Vec<_> = sources
+            .iter()
+            .filter(|s| s.priority == SkillSourcePriority::Project)
+            .collect();
+        assert_eq!(project_sources.len(), 1);
+        // resolved paths may differ, but the relative structure matches
+        assert!(project_sources[0].path.ends_with(".agents/skills"));
     }
 }

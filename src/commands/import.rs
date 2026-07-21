@@ -132,43 +132,130 @@ fn cmd_import_mcp(harness_id: &str, all: bool, force: bool) {
 }
 
 fn cmd_import_skills(source: Option<PathBuf>, force: bool, link: bool, update: bool) {
-    let source = source.unwrap_or_else(|| platform::home_dir().join(".agents").join("skills"));
     let target = profile::active_skills_path(&bridle_home());
 
-    if !source.exists() {
-        eprintln!(
-            "Source skills directory does not exist: {}",
-            source.display()
-        );
-        std::process::exit(1);
-    }
-
-    match skills::import_skills(&source, &target, force, link, update) {
-        Ok(report) => {
-            for name in &report.imported {
-                println!("✅ Imported skill: {}", name);
-            }
-            for name in &report.skipped {
-                println!("⏭️  Skipped (already in bridle): {}", name);
-            }
-            for (name, err) in &report.errors {
-                println!("❌ Error importing {}: {}", name, err);
-            }
-
-            println!();
-            println!(
-                "📊 Skills import summary: {} imported, {} skipped, {} errors",
-                report.imported.len(),
-                report.skipped.len(),
-                report.errors.len()
-            );
-            if !report.skipped.is_empty() && !force && !update {
-                println!("💡 Run 'bridle import skills --update' to refresh changed skills, or '--force' to overwrite all.");
-            }
-        }
-        Err(e) => {
-            eprintln!("Failed to import skills: {}", e);
+    if let Some(ref src) = source {
+        // Explicit single-source import (legacy path)
+        if !src.exists() {
+            eprintln!("Source skills directory does not exist: {}", src.display());
             std::process::exit(1);
         }
+
+        match skills::import_skills(src, &target, force, link, update) {
+            Ok(report) => {
+                print_single_source_report(&report);
+            }
+            Err(e) => {
+                eprintln!("Failed to import skills: {}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        // Multi-source import: discover all skill directories, resolve collisions
+        let plat = platform::detect();
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let sources = skills::discover_skill_sources(plat, &cwd);
+
+        if sources.is_empty() {
+            eprintln!("No skill source directories found.");
+            eprintln!(
+                "Add skills to {}/.agents/skills/ or a project's .agents/skills/, then try again.",
+                platform::home_dir().display()
+            );
+            std::process::exit(1);
+        }
+
+        match skills::import_skills_from_sources(&sources, &target, force, link, update) {
+            Ok(report) => {
+                print_multi_source_report(&report);
+            }
+            Err(e) => {
+                eprintln!("Failed to import skills: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+fn print_single_source_report(report: &skills::SkillsImportReport) {
+    for name in &report.imported {
+        println!("✅ Imported skill: {}", name);
+    }
+    for name in &report.skipped {
+        println!("⏭️  Skipped (already in bridle): {}", name);
+    }
+    for (name, err) in &report.errors {
+        println!("❌ Error importing {}: {}", name, err);
+    }
+
+    println!();
+    println!(
+        "📊 Skills import summary: {} imported, {} skipped, {} errors",
+        report.imported.len(),
+        report.skipped.len(),
+        report.errors.len()
+    );
+    if !report.skipped.is_empty() && !report.imported.is_empty() {
+        println!("💡 Run 'bridle import skills --update' to refresh changed skills, or '--force' to overwrite all.");
+    }
+}
+
+fn print_multi_source_report(report: &skills::MultiSourceImportReport) {
+    for name in &report.imported {
+        println!("✅ Imported skill: {}", name);
+    }
+    for name in &report.skipped {
+        println!("⏭️  Skipped (already in bridle): {}", name);
+    }
+    for (name, err) in &report.errors {
+        println!("❌ Error importing {}: {}", name, err);
+    }
+
+    // Print collision details
+    for collision in &report.collisions {
+        println!();
+        println!("  \"{}\" collision:", collision.name);
+        println!(
+            "       ✓ auto ({}) {}",
+            collision.chosen.priority,
+            collision
+                .chosen
+                .path
+                .join(&collision.name)
+                .join("SKILL.md")
+                .display()
+        );
+        for skipped in &collision.skipped {
+            println!(
+                "       ✗ {} (skipped)",
+                skipped
+                    .path
+                    .join(&collision.name)
+                    .join("SKILL.md")
+                    .display()
+            );
+        }
+    }
+
+    println!();
+    let has_collisions = !report.collisions.is_empty();
+    println!(
+        "📊 Skills import summary: {} imported, {} skipped, {} collision{}{}",
+        report.imported.len(),
+        report.skipped.len(),
+        report.collisions.len(),
+        if report.collisions.len() != 1 {
+            "s"
+        } else {
+            ""
+        },
+        if !report.errors.is_empty() {
+            format!(", {} errors", report.errors.len())
+        } else {
+            String::new()
+        }
+    );
+    if has_collisions {
+        println!("💡 Collisions resolved automatically by priority: project > user > default");
     }
 }
