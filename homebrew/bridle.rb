@@ -1,8 +1,8 @@
 class Bridle < Formula
   desc "Sync MCP servers, skills, and agents across all AI coding harnesses"
   homepage "https://github.com/KristianLentino99/bridle"
-  url "https://github.com/KristianLentino99/bridle/archive/refs/tags/v0.4.0.tar.gz"
-  sha256 "1d23dbc8d64aba37753d053245b0e1a8d400c7a3bc505508b380417368141241"
+  url "https://github.com/KristianLentino99/bridle/archive/refs/tags/v0.5.0.tar.gz"
+  sha256 "b59254bc5b74a1ad8ed0083b1d8b42f053aba58093e1cd2e07601a6124585e22"
   license "MIT"
   head "https://github.com/KristianLentino99/bridle.git", branch: "main"
 
